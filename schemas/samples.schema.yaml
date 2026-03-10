@@ -1,0 +1,20 @@
+$schema: "https://json-schema.org/draft-06/schema#"
+description: an entry in the sample sheet for dose-response modeling
+properties:
+    sample:
+        type: string
+        description: sample name/identifier, must match sample names in the feature_by_sample_table
+    Series:
+        type: string
+        description: >
+            Modeling group name. Samples sharing a Series are modeled together
+            (e.g. one dose-response curve per Series). Shared controls (e.g. DMSO)
+            should appear as multiple rows, once per Series they belong to.
+    Treatment:
+        type: string
+        description: Treatment/compound name
+    dose.nM:
+        type: number
+        description: Dose in nanomolar units
+required:
+    - sample

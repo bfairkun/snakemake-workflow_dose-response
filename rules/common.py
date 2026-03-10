@@ -1,4 +1,5 @@
 import pandas as pd
+from snakemake.utils import validate
 
 # ---------------------------------------------------------------------------
 # Load config values at workflow parse time
@@ -10,7 +11,8 @@ N_BATCHES  = int(config.get("n_batches", 200))
 # Infer the list of Series (modeling groups) from the samples.tsv at parse time.
 # This is safe because samples.tsv is a static input file, not a workflow output.
 _samples = pd.read_csv(config["samples"], sep="\t")
-SERIES   = _samples["Series"].dropna().unique().tolist()
+SERIES   = _samples["Series"].dropna().unique().tolist() if "Series" in _samples.columns else []
+validate(_samples, "../schemas/samples.schema.yaml")
 
 
 # ---------------------------------------------------------------------------
