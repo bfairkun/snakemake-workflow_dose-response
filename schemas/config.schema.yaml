@@ -1,0 +1,39 @@
+$schema: "http://json-schema.org/draft-07/schema#"
+description: "Configuration schema for snakemake-workflow_dose-response"
+type: object
+required:
+  - samples
+  - approaches
+properties:
+  samples:
+    type: string
+    description: "Path to samples.tsv with columns: sample, Series, Treatment, dose.nM"
+  n_batches:
+    type: integer
+    minimum: 1
+    default: 200
+    description: "Number of parallel batches for model fitting"
+  pytensor_scratch:
+    type: string
+    default: "/tmp/"
+    description: "Scratch directory for PyTensor compilation cache"
+  approaches:
+    type: object
+    minProperties: 1
+    description: "Dict of modeling approaches; each must have feature_by_sample_table, tidy_transform, model_params"
+    additionalProperties:
+      type: object
+      required:
+        - feature_by_sample_table
+        - tidy_transform
+        - model_params
+      properties:
+        feature_by_sample_table:
+          type: string
+          description: "Path to BED6+ feature-by-sample matrix"
+        tidy_transform:
+          type: string
+          description: "Name of transform script in scripts/transforms/ (without .R extension)"
+        model_params:
+          type: string
+          description: "Extra CLI arguments for BayesianDoseResponse_ByBatch.py"

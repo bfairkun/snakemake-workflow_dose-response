@@ -1,0 +1,53 @@
+# ---------------------------------------------------------------------------
+# snakemake-workflow_dose-response — default configuration
+#
+# When using this workflow as a Snakemake module, override these values via
+# the config["dose_response"] namespace in your parent project's config.yaml.
+# ---------------------------------------------------------------------------
+
+# Path to samples.tsv.
+# Required columns: sample, Series, Treatment, dose.nM
+# Additional columns are ignored.
+# Shared controls (e.g. DMSO used in multiple series) should appear as
+# multiple rows, once per Series they belong to.
+samples: "config/samples.tsv"
+
+# Number of parallel batches for Bayesian model fitting (more = faster on cluster)
+n_batches: 200
+
+# HPC scratch directory for PyTensor compilation cache.
+# Use /tmp/ for local execution. On SLURM clusters use a fast scratch path.
+pytensor_scratch: "/tmp/"
+
+# ---------------------------------------------------------------------------
+# Modeling approaches
+#
+# Each approach specifies:
+#   feature_by_sample_table: path to a feature-by-sample table (BED6+ format:
+#       cols 1-6 BED coords, col 4 = featureID, cols 7+ = one per sample).
+#       For expression: log2-normalized CPM values (e.g. from rna-seq module's
+#       ExpressionMatrices output). For splicing: junction read counts (e.g.
+#       leafcutter JuncCounts.sorted.bed.gz).
+#   tidy_transform: name of R script in scripts/transforms/ (without extension)
+#       that converts the feature_by_sample_table to the tidy format.
+#       Built-in transforms: expression_log2fc, junction_counts
+#   model_params: extra CLI arguments passed to BayesianDoseResponse_ByBatch.py
+# ---------------------------------------------------------------------------
+approaches:
+  ExpressionLogFC:
+    feature_by_sample_table: "rna-seq/ExpressionMatrices/GRCh38_GencodeRelease44Comprehensive/log2Filtered_TMM_CPM.sorted.bed.gz"
+    tidy_transform: "expression_log2fc"
+    model_params: >-
+      --model 1
+      --PreFilterByNumberReasonableObservedOutcomes y 2 -100 -1
+      --PreFilterByNumberReasonableObservedOutcomes y 2 1 100
+
+  SplicingPSI:
+    feature_by_sample_table: "rna-seq/SplicingAnalysis/leafcutter/GRCh38_GencodeRelease44Comprehensive/juncTableBeds/JuncCounts.sorted.bed.gz"
+    tidy_transform: "junction_counts"
+    model_params: >-
+      --model 2
+      --PreFilterByNumberReasonableObservedOutcomes n 5 10 100000
+      --PreFilterByNumberReasonableObservedOutcomes y 3 3 100000
+      --PosteriorFilter MaxDeltaPSI 0.95 -1 -0.1
+      --PosteriorFilter MaxDeltaPSI 0.95 0.1 1
