@@ -53,6 +53,8 @@ rule SeparateTidyDataIntoBatches:
             "DoseResponseModelling/{{Approach}}/DataBatched/{{series}}/{n}.tsv.gz",
             n=range(N_BATCHES)
         )
+    params:
+        n_batches = N_BATCHES
     log:
         "logs/SeparateTidyDataIntoBatches.{Approach}.{series}.log"
     conda:
@@ -64,7 +66,7 @@ rule SeparateTidyDataIntoBatches:
         Rscript scripts/SeparateTidyDataIntoBatches.R \
             {input} \
             DoseResponseModelling/{wildcards.Approach}/DataBatched/{wildcards.series}/ \
-            {N_BATCHES} \
+            {params.n_batches} \
             &> {log}
         """
 
