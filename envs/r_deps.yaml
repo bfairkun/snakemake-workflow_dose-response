@@ -12,3 +12,4 @@ dependencies:
   - r-readr=1.4.0
   - r-stringr=1.4.0
   - r-purrr=0.3.4
+  - r-r.utils

@@ -30,7 +30,7 @@ library(data.table)
 
 dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
 
-samples     <- read_tsv(samples_fn, show_col_types = FALSE)
+samples     <- read_tsv(samples_fn)
 junc_counts <- fread(junc_counts_fn)
 
 series_list <- unique(samples$Series)

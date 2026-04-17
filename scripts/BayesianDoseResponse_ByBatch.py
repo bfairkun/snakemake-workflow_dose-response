@@ -141,6 +141,15 @@ def fit_gene_expression_model(df, feature, samples=1000, args=None):
         else:
             upper = pm.Normal('upper', mu=0, sigma=3.0)
 
+        # logEC50 default prior centered at midpoint of each treatment's assayed log10-dose range.
+        # sigma=1.5 keeps the same width as the old prior — only the center moves.
+        logEC50_mu_data = {}
+        for t in treatments:
+            log_doses = np.log10(
+                treated_data[treated_data["treatment"] == t]["dose"].astype(float).values
+            )
+            logEC50_mu_data[t] = (log_doses.min() + log_doses.max()) / 2.0
+
         # Flexible priors for slope and logEC50 (per-treatment)
         slope_list = []
         logEC50_list = []
@@ -162,7 +171,7 @@ def fit_gene_expression_model(df, feature, samples=1000, args=None):
                 family, params_ = default_priors["logEC50"]
                 logEC50_list.append(get_prior_dist(family, params_, f"logEC50_{t}"))
             else:
-                logEC50_list.append(pm.Normal(f"logEC50_{t}", mu=3.5, sigma=1.5))
+                logEC50_list.append(pm.Normal(f"logEC50_{t}", mu=logEC50_mu_data[t], sigma=1.5))
         slope = pm.Deterministic("slope", pm.math.stack(slope_list), dims="treatment")
         logEC50 = pm.Deterministic("logEC50", pm.math.stack(logEC50_list), dims="treatment")
 
@@ -177,7 +186,7 @@ def fit_gene_expression_model(df, feature, samples=1000, args=None):
 
         pm.Deterministic('ED2x', logEC50 - (1 / slope) * pm.math.log(pm.math.abs(upper) - 1), dims="treatment")
 
-        idata = pm.sample(samples, tune=2000, target_accept=0.95, random_seed=42, cores=1)
+        idata = pm.sample(samples, tune=1000, target_accept=0.95, random_seed=42, cores=1)
 
     return idata, model
 
@@ -233,7 +242,14 @@ def fit_splicing_model(df, feature, samples=1000, args=None):
             family, params_ = default_priors["upper"]
             upper = get_prior_dist(family, params_, "upper")
         else:
-            upper = pm.Uniform("upper", lower=0, upper=1)
+            # Logit-delta reparameterization: upper = sigmoid(logit(lower) + delta_logit)
+            # delta_logit ~ N(0, 2.5) shrinks upper toward lower in absence of data;
+            # sigma=2.5 on the logit scale allows large splicing effects (e.g. 1%→99% PSI).
+            delta_logit = pm.Normal("delta_logit", mu=0, sigma=2.5)
+            upper = pm.Deterministic(
+                "upper",
+                pm.math.sigmoid(pm.math.log(lower / (1 - lower)) + delta_logit)
+            )
         # slope
         if "slope" in priors and "ALL" in priors["slope"]:
             family, params_ = priors["slope"]["ALL"]
@@ -252,7 +268,16 @@ def fit_splicing_model(df, feature, samples=1000, args=None):
             phi = get_prior_dist(family, params_, "phi")
         else:
             phi = pm.Gamma("phi", alpha=2, beta=0.2)
-        # logEC50 (per-treatment)
+        # logEC50 (per-treatment) — default prior centered at midpoint of each treatment's
+        # assayed log10-dose range, so the prior is anchored within the observable range
+        # regardless of how different potencies are across treatments.
+        logEC50_mu_data = {}
+        for t in treatments:
+            log_doses = np.log10(
+                treated_data[treated_data["treatment"] == t]["dose"].astype(float).values
+            )
+            logEC50_mu_data[t] = (log_doses.min() + log_doses.max()) / 2.0
+
         logEC50_list = []
         for i, t in enumerate(treatments):
             if "logEC50" in priors and t in priors["logEC50"]:
@@ -262,7 +287,7 @@ def fit_splicing_model(df, feature, samples=1000, args=None):
                 family, params_ = default_priors["logEC50"]
                 logEC50_list.append(get_prior_dist(family, params_, f"logEC50_{t}"))
             else:
-                logEC50_list.append(pm.Normal(f"logEC50_{t}", mu=3.5, sigma=1.5))
+                logEC50_list.append(pm.Normal(f"logEC50_{t}", mu=logEC50_mu_data[t], sigma=1.0))
         logEC50 = pm.Deterministic("logEC50", pm.math.stack(logEC50_list), dims="treatment")
 
         # Model mean PSI for treated
@@ -318,7 +343,7 @@ def fit_splicing_model(df, feature, samples=1000, args=None):
             logEC50 - (1 / slope) * pm.math.log((upper - lower) / (y_star - lower) - 1),
             dims="treatment"
         )
-        idata = pm.sample(samples, tune=2000, target_accept=0.95, random_seed=42, cores=1)
+        idata = pm.sample(samples, tune=1000, target_accept=0.95, random_seed=42, cores=1)
     return idata, model
 
 ### will need to add a function for fitting splicing model, that similarly returns idata and model objects

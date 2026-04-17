@@ -78,7 +78,10 @@ def main():
             'mean': {t: float(post_mean[np.where(trt_names_m == t)[0][0]]) for t in trt_names}
         }
 
-    # Filter genes per pair by assayed range (at least one treatment in pair has exp10(mean) within range)
+    # Filter genes per pair by assayed range: BOTH treatments must have EC50 mean within their
+    # respective assayed range. Using "at least one" inflates mu_gw because junctions where only
+    # the more-potent drug responds (the other is extrapolated far out of range) contribute large
+    # differences that bias the genome-wide null away from the true head-to-head potency ratio.
     gw_records = []
     for gene, info in gene_info.items():
         for (t1, t2) in pairs:
@@ -90,7 +93,7 @@ def main():
             r2 = info['ranges'][t2]
             in1 = (np.isfinite(e1) and np.isfinite(r1[0]) and r1[0] <= e1 <= r1[1])
             in2 = (np.isfinite(e2) and np.isfinite(r2[0]) and r2[0] <= e2 <= r2[1])
-            if in1 or in2:
+            if in1 and in2:
                 gw_records.append({'gene': gene, 'pair': (t1, t2), 'diff_mean': m1 - m2})
 
     df_pairs = pd.DataFrame(gw_records)

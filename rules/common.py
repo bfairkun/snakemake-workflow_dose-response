@@ -14,6 +14,17 @@ _samples = pd.read_csv(config["samples"], sep="\t")
 SERIES   = _samples["Series"].dropna().unique().tolist() if "Series" in _samples.columns else []
 validate(_samples, "../schemas/samples.schema.yaml")
 
+# Series with >1 unique non-control Treatment (i.e. Treatment != control_treatment).
+# SpecificityTest is only meaningful for these — single-drug series produce a
+# drug-vs-DMSO comparison that is already captured by the dose-response model itself.
+def _n_nondmso_treatments(df):
+    return df.loc[df["Treatment"] != df["control_treatment"], "Treatment"].nunique()
+
+SERIES_WITH_MULTIPLE_TREATMENTS = [
+    s for s in SERIES
+    if _n_nondmso_treatments(_samples[_samples["Series"] == s]) > 1
+]
+
 
 # ---------------------------------------------------------------------------
 # Memory scaling helper for successive SLURM retry attempts

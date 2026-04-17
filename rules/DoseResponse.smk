@@ -32,7 +32,7 @@ rule CreateTidyData:
     conda:
         "../envs/r_deps.yaml"
     resources:
-        mem_mb = 24000
+        mem_mb = GetMemForSuccessiveAttempts(24000, 48000)
     shell:
         """
         Rscript scripts/transforms/{params.transform}.R \
@@ -194,6 +194,6 @@ rule GatherAll:
         expand(
             "DoseResponseModelling/{Approach}/SpecificityTest/{series}_SpecificityTestResults.tsv.gz",
             Approach=list(APPROACHES.keys()),
-            series=SERIES
+            series=SERIES_WITH_MULTIPLE_TREATMENTS
         ),
         "DoseResponseModelling/InferenceDataResults.sqlite"
