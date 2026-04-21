@@ -135,9 +135,9 @@ rule SpecificityTest:
     input:
         pkl = "DoseResponseModelling/{Approach}/Results/{series}.pkl"
     output:
-        "DoseResponseModelling/{Approach}/SpecificityTest/{series}_SpecificityTestResults.tsv.gz"
+        "DoseResponseModelling/{Approach}/SpecificityTest/{series}/{posterior_param}_SpecificityTestResults.tsv.gz"
     log:
-        "logs/SpecificityTest.{Approach}.{series}.log"
+        "logs/SpecificityTest.{Approach}.{series}.{posterior_param}.log"
     conda:
         "../envs/pymc.yaml"
     resources:
@@ -147,6 +147,7 @@ rule SpecificityTest:
         python scripts/DoseResponseSpecificityTest_cli.py \
             --infile {input.pkl} \
             --outfile {output} \
+            --posterior_param {wildcards.posterior_param} \
             &> {log}
         """
 
@@ -191,9 +192,10 @@ rule GatherAll:
             Approach=list(APPROACHES.keys()),
             series=SERIES
         ),
-        expand(
-            "DoseResponseModelling/{Approach}/SpecificityTest/{series}_SpecificityTestResults.tsv.gz",
-            Approach=list(APPROACHES.keys()),
-            series=SERIES_WITH_MULTIPLE_TREATMENTS
-        ),
+        [
+            f"DoseResponseModelling/{approach}/SpecificityTest/{series}/{param}_SpecificityTestResults.tsv.gz"
+            for approach in APPROACHES
+            for series in SERIES_WITH_MULTIPLE_TREATMENTS
+            for param in APPROACH_SPECIFICITY_PARAMS[approach]
+        ],
         "DoseResponseModelling/InferenceDataResults.sqlite"

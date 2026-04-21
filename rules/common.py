@@ -7,6 +7,10 @@ from snakemake.utils import validate
 
 APPROACHES = config.get("approaches", {})
 N_BATCHES  = int(config.get("n_batches", 200))
+APPROACH_SPECIFICITY_PARAMS = {
+    approach: config["approaches"][approach].get("specificity_test_params", ["logEC50"])
+    for approach in APPROACHES
+}
 
 # Infer the list of Series (modeling groups) from the samples.tsv at parse time.
 # This is safe because samples.tsv is a static input file, not a workflow output.
