@@ -4,6 +4,8 @@
 created and the model graph stays byte-identical to the covariate-free version -- that is
 what keeps existing fits exactly reproducible.
 """
+import logging
+
 import pymc as pm
 
 from ..covariates import DEFAULT_COVARIATE_PRIOR_SD, parse_covariate_priors

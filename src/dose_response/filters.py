@@ -3,6 +3,7 @@
 Moved verbatim from scripts/BayesianDoseResponse_ByBatch.py; behaviour is unchanged.
 """
 import logging
+from collections import defaultdict
 
 import numpy as np
 

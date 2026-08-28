@@ -2,9 +2,11 @@
 
 Moved verbatim from scripts/BayesianDoseResponse_ByBatch.py; behaviour is unchanged.
 """
+from collections import defaultdict
+
 import pymc as pm
 
-__all__ = ["get_prior_dist", "parse_priors", "validate_treatment_specific_priors"]
+__all__ = ["get_prior_dist", "parse_priors"]
 
 
 # --- Flexible prior parsing and mapping ---
@@ -35,14 +37,3 @@ def parse_priors(args):
             param, family, *params = prior
             default_priors[param] = (family, [float(p) for p in params])
     return priors, default_priors
-
-def validate_treatment_specific_priors(args, model_num):
-    allowed = TREATMENT_INDEXED_PARAMS[model_num]
-    if hasattr(args, "prior") and args.prior:
-        for prior in args.prior:
-            param, treatment, *_ = prior
-            if treatment != "ALL" and param not in allowed:
-                raise ValueError(
-                    f"Parameter '{param}' is not indexed by treatment in model {model_num}, "
-                    f"so you cannot specify a treatment-specific prior for it (got --prior {param} {treatment} ...)."
-                )

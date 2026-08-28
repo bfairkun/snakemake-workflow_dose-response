@@ -3,6 +3,7 @@
 Moved verbatim from scripts/BayesianDoseResponse_ByBatch.py; behaviour is unchanged.
 """
 import numpy as np
+import pymc as pm
 
 __all__ = ["r2_by_treatment_expression", "r2_by_treatment_splicing"]
 

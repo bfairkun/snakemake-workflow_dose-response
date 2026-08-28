@@ -31,11 +31,12 @@ from ..fitting import (
     MODEL_CONFIG,
     TREATMENT_INDEXED_PARAMS,
     validate_covariate_args,
+    validate_treatment_specific_priors,
 )
 from ..models.expression_absolute import fit_expression_absolute_model
 from ..models.expression_logfc import fit_gene_expression_model
 from ..models.splicing_psi import fit_splicing_model
-from ..priors import get_prior_dist, parse_priors, validate_treatment_specific_priors
+from ..priors import get_prior_dist, parse_priors
 from ..summarize import r2_by_treatment_expression, r2_by_treatment_splicing
 
 __all__ = ["main", "parse_args", "setup_logging"]

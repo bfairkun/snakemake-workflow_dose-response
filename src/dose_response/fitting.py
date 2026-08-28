@@ -7,7 +7,7 @@ from .models.expression_logfc import fit_gene_expression_model
 from .models.splicing_psi import fit_splicing_model
 from .summarize import r2_by_treatment_expression, r2_by_treatment_splicing
 
-__all__ = ["MODEL_CONFIG", "COVARIATE_INDEXED_SUMMARY_VARS", "TREATMENT_INDEXED_PARAMS",
+__all__ = ["validate_treatment_specific_priors", "MODEL_CONFIG", "COVARIATE_INDEXED_SUMMARY_VARS", "TREATMENT_INDEXED_PARAMS",
            "COVARIATE_SUPPORTED_MODELS", "validate_covariate_args"]
 
 
@@ -73,3 +73,15 @@ def validate_covariate_args(args, model_num):
         for opt in ("covariate_cols", "covariate_prior"):
             if getattr(args, opt, None):
                 raise ValueError(f"--{opt} was given without --covariates.")
+
+
+def validate_treatment_specific_priors(args, model_num):
+    allowed = TREATMENT_INDEXED_PARAMS[model_num]
+    if hasattr(args, "prior") and args.prior:
+        for prior in args.prior:
+            param, treatment, *_ = prior
+            if treatment != "ALL" and param not in allowed:
+                raise ValueError(
+                    f"Parameter '{param}' is not indexed by treatment in model {model_num}, "
+                    f"so you cannot specify a treatment-specific prior for it (got --prior {param} {treatment} ...)."
+                )
