@@ -34,6 +34,24 @@ dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
 
 samples <- read_tsv(samples_fn)
 
+# Optional per-approach exclusion. A sample can be legitimately usable for one approach and
+# not another: e.g. libraries with a 3'-biased coverage profile distort gene-level expression
+# (long transcripts under-counted) while relative junction counts within a cluster are far
+# more robust to it, because numerator and denominator share the same local bias. If the
+# samples file carries an `exclude_expression` column, drop those rows here only.
+#
+# This matters more here than for the log2FC transforms: on an ABSOLUTE abundance scale there
+# is no baseline subtraction to partially cancel a length-dependent tilt between a degraded
+# treated sample and a similarly degraded control.
+if ("exclude_expression" %in% names(samples)) {
+    drop <- samples %>% filter(toupper(as.character(exclude_expression)) == "TRUE")
+    if (nrow(drop) > 0) {
+        message("Excluding ", nrow(drop), " sample-series row(s): ",
+                paste(unique(drop$sample), collapse = ", "))
+        samples <- samples %>% filter(!toupper(as.character(exclude_expression)) == "TRUE")
+    }
+}
+
 # Read bed6+ file
 bed <- fread(bed_fn)
 col_names   <- names(bed)

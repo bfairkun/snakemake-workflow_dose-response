@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dose_response"
+version = "0.1.0"
+authors = [{ name = "Benjamin Fair", email = "bfair.kun@gmail.com" }]
+description = "Bayesian dose-response models for expression and splicing, with Snakemake wrappers"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "numpy",
+  "pandas",
+  "scipy",
+  "pymc>=5.20",
+  "arviz>=0.20",
+]
+
+# Plotting is optional so the fitting CLI does not pull matplotlib into a compute env
+# that does not need it. `dose_response.plotting` is never imported from __init__.
+[project.optional-dependencies]
+plotting = ["matplotlib"]
+
+[project.scripts]
+dose-response-fit = "dose_response.cli.fit_batch:main"
+dose-response-gather = "dose_response.cli.gather:main"
+dose-response-specificity = "dose_response.cli.specificity_test:main"
+dose-response-sqlite = "dose_response.cli.write_sqlite:main"
+
+[tool.setuptools]
+packages = ["dose_response", "dose_response.models", "dose_response.cli"]
+package-dir = {"" = "src"}
+
+[dependency-groups]
+test = [
+  "pytest >=9",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

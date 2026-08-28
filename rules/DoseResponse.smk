@@ -26,7 +26,10 @@ rule CreateTidyData:
         )
     params:
         transform  = lambda wc: config["approaches"][wc.Approach]["tidy_transform"],
-        output_dir = lambda wc: f"DoseResponseModelling/Data/{wc.Approach}"
+        output_dir = lambda wc: f"DoseResponseModelling/Data/{wc.Approach}",
+        # Optional extra arguments appended after the standard three. Transforms that do not
+        # read them ignore them, so this is safe for every approach.
+        transform_args = lambda wc: config["approaches"][wc.Approach].get("transform_args", "")
     log:
         "logs/CreateTidyData.{Approach}.log"
     conda:
@@ -39,6 +42,7 @@ rule CreateTidyData:
             {input.samples} \
             {input.feature_by_sample_table} \
             {params.output_dir}/ \
+            {params.transform_args} \
             &> {log}
         """
 
@@ -74,7 +78,11 @@ rule SeparateTidyDataIntoBatches:
 rule FitBayesianDoseResponse_ByBatch:
     """Fit Bayesian dose-response model to one batch of features."""
     input:
-        "DoseResponseModelling/{Approach}/DataBatched/{series}/{n}.tsv.gz"
+        data = "DoseResponseModelling/{Approach}/DataBatched/{series}/{n}.tsv.gz",
+        # Declared as a real input (not buried in the model_params string) so that editing the
+        # covariate table re-triggers the fits. Empty list when the approach declares none.
+        covariates = lambda wc: [config["approaches"][wc.Approach]["covariates"]]
+                                if config["approaches"][wc.Approach].get("covariates") else []
     output:
         pkl = "DoseResponseModelling/{Approach}/ResultsBatched/{series}/{n}.pkl",
         tsv = "DoseResponseModelling/{Approach}/ResultsBatched/{series}/{n}.tsv.gz"
@@ -84,6 +92,8 @@ rule FitBayesianDoseResponse_ByBatch:
         "../envs/pymc.yaml"
     params:
         extra           = lambda wc: config["approaches"][wc.Approach]["model_params"],
+        covariates      = lambda wc: f"--covariates {config['approaches'][wc.Approach]['covariates']}"
+                                     if config["approaches"][wc.Approach].get("covariates") else "",
         pytensor_scratch = config.get("pytensor_scratch", "/tmp/")
     resources:
         mem_mb = GetMemForSuccessiveAttempts(58000)
@@ -91,9 +101,10 @@ rule FitBayesianDoseResponse_ByBatch:
         """
         export PYTENSOR_FLAGS="compiledir={params.pytensor_scratch}/${{SLURM_JOBID:-$$}}/pytensor_cache_${{RANDOM}},force_compile=True" && \
         python scripts/BayesianDoseResponse_ByBatch.py \
-            --input {input} \
+            --input {input.data} \
             --output_pkl {output.pkl} \
             --output_tsv {output.tsv} \
+            {params.covariates} \
             {params.extra} \
             &> {log}
         """
