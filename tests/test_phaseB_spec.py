@@ -1,0 +1,175 @@
+"""The Phase B specification, as executable assertions.
+
+Every test here is marked xfail(strict=True) while Phase A is the current state. The moment
+Phase B lands, pytest reports XPASS -- which is a failure under strict -- and the marker
+must be removed. That is the point: the spec cannot be quietly dropped, and it cannot be
+quietly half-implemented either.
+
+Sourced from docs/dose_response_refactor_plan.md sections 2 and 3.
+"""
+import numpy as np
+import pytest
+
+pytestmark = pytest.mark.xfail(strict=True, reason="Phase B not yet implemented")
+
+LN2, LOG2_10, LN10 = np.log(2.0), np.log2(10.0), np.log(10.0)
+
+
+def _rv_spec(model, name):
+    """(distribution class name, [parameter values]) for a free RV in a fitted model."""
+    for v in model.free_RVs:
+        if v.name == name:
+            cls = type(v.owner.op).__name__
+            params = [np.asarray(i.eval()).ravel()[0] for i in v.owner.inputs[3:]]
+            return cls, params
+    raise AssertionError(f"{name!r} is not a free RV; free_RVs = "
+                         f"{sorted(v.name for v in model.free_RVs)}")
+
+
+def _fit(which, batch, **kw):
+    from dose_response.fitting import MODEL_CONFIG
+    return MODEL_CONFIG[which]["fit_func"](batch, samples=50, **kw)
+
+
+# --- naming -------------------------------------------------------------------------------
+@pytest.mark.parametrize("model_key", ["splicing_psi", "splicing_log2odds"])
+def test_named_model_registry(model_key):
+    """--model takes names; integers stay as aliases."""
+    from dose_response.fitting import MODEL_REGISTRY
+    assert model_key in MODEL_REGISTRY
+    assert MODEL_REGISTRY[2] is MODEL_REGISTRY["splicing_psi"]
+    assert MODEL_REGISTRY[4] is MODEL_REGISTRY["splicing_log2odds"]
+
+
+def test_maxdeltapsi_is_retired(splicing_batch):
+    """Retired rather than sign-flipped, so old and new files stay distinguishable."""
+    idata, _ = _fit("splicing_psi", splicing_batch)
+    assert "MaxDeltaPSI" not in idata.posterior
+    assert "span_PSI" in idata.posterior
+
+
+@pytest.mark.parametrize("model_key,expected", [
+    ("splicing_psi", {"baseline_PSI", "plateau_PSI", "span_PSI", "span_log2odds",
+                      "baseline_log2odds", "plateau_log2odds", "rate", "hill", "logEC50",
+                      "logEC50_log2odds", "logEC_dPSI05", "logEC2x_odds", "phi",
+                      "dPSI_at_maxdose", "frac_realized", "psi_treated"}),
+    ("splicing_log2odds", {"baseline_log2odds", "span_log2odds", "plateau_log2odds",
+                           "baseline_PSI", "plateau_PSI", "span_PSI", "rate", "hill",
+                           "logEC50", "logEC50_log2odds", "span_by_arm_log2odds",
+                           "span_sign_min", "dPSI_at_maxdose", "frac_realized",
+                           "psi_treated", "phi"}),
+])
+def test_expected_variable_names(splicing_batch, model_key, expected):
+    idata, _ = _fit(model_key, splicing_batch)
+    missing = expected - set(idata.posterior.data_vars)
+    assert not missing, f"missing: {sorted(missing)}"
+
+
+@pytest.mark.parametrize("model_key", ["splicing_psi", "splicing_log2odds"])
+def test_dropped_names_are_gone(splicing_batch, model_key):
+    idata, _ = _fit(model_key, splicing_batch)
+    for gone in ["a2", "U2", "Delta2", "H", "k", "beta2", "amp2", "min_amp_signed",
+                 "EC_dPSI50Max", "delta_half", "Emax", "lower", "upper", "slope",
+                 "delta_logit", "ED2x", "ED2x_odds", "ED_5dPSI", "psi_asymptote", "psi_floor"]:
+        assert gone not in idata.posterior, f"{gone} should have been renamed away"
+
+
+# --- priors, identical in both models ------------------------------------------------------
+@pytest.mark.parametrize("model_key", ["splicing_psi", "splicing_log2odds"])
+def test_span_prior_is_studentt_3_0_6(splicing_batch, model_key):
+    _, model = _fit(model_key, splicing_batch)
+    cls, params = _rv_spec(model, "span_log2odds")
+    assert "StudentT" in cls, cls
+    nu, mu, sigma = params[0], params[1], params[2]
+    assert (nu, mu, sigma) == pytest.approx((3.0, 0.0, 6.0))
+
+
+@pytest.mark.parametrize("model_key", ["splicing_psi", "splicing_log2odds"])
+def test_hill_is_sampled_lognormal(splicing_batch, model_key):
+    """hill is a free RV; rate is derived from it, not sampled."""
+    _, model = _fit(model_key, splicing_batch)
+    cls, params = _rv_spec(model, "hill")
+    assert "LogNormal" in cls, cls
+    assert params[0] == pytest.approx(np.log(1.5))
+    assert params[1] == pytest.approx(0.35)
+    assert "rate" not in {v.name for v in model.free_RVs}
+
+
+@pytest.mark.parametrize("model_key", ["splicing_psi", "splicing_log2odds"])
+def test_logEC50_prior_is_wide(splicing_batch, model_key):
+    """sigma = 3: the PSI-halfway dose routinely lies above the top assayed dose."""
+    _, model = _fit(model_key, splicing_batch)
+    names = [v.name for v in model.free_RVs if v.name.startswith("logEC50_")]
+    assert names, [v.name for v in model.free_RVs]
+    for n in names:
+        cls, params = _rv_spec(model, n)
+        assert "Normal" in cls and "LogNormal" not in cls, cls
+        assert params[1] == pytest.approx(3.0)
+
+
+@pytest.mark.parametrize("model_key", ["splicing_psi", "splicing_log2odds"])
+def test_phi_prior_shared(splicing_batch, model_key):
+    _, model = _fit(model_key, splicing_batch)
+    cls, params = _rv_spec(model, "phi")
+    assert "Gamma" in cls
+    assert params[0] == pytest.approx(2.0)
+
+
+# --- semantics ----------------------------------------------------------------------------
+@pytest.mark.parametrize("model_key", ["splicing_psi", "splicing_log2odds"])
+def test_span_sign_convention(splicing_batch, model_key):
+    """span = plateau - baseline. The synthetic junction rises, so span must be positive."""
+    idata, _ = _fit(model_key, splicing_batch)
+    p = idata.posterior
+    assert float(p["span_PSI"].mean()) > 0
+    assert float(p["span_log2odds"].mean()) > 0
+    assert float(p["plateau_PSI"].mean()) > float(np.asarray(p["baseline_PSI"]).mean())
+
+
+@pytest.mark.parametrize("model_key", ["splicing_psi", "splicing_log2odds"])
+def test_hill_matches_max_slope(splicing_batch, model_key):
+    """The hill <-> rate conversion must hold, with the model-appropriate formula."""
+    idata, _ = _fit(model_key, splicing_batch)
+    p = idata.posterior
+    hill = np.asarray(p["hill"]).ravel()
+    rate = np.asarray(p["rate"]).ravel()
+    if model_key == "splicing_log2odds":
+        span = np.abs(np.asarray(p["span_log2odds"]).ravel())
+        implied = rate * span / (4 * LOG2_10)
+    else:
+        base = np.asarray(p["baseline_PSI"]).ravel()
+        plat = np.asarray(p["plateau_PSI"]).ravel()
+        m = (base + plat) / 2
+        implied = rate * (plat - base) / (4 * m * (1 - m) * LN10)
+    assert implied == pytest.approx(hill, rel=0.02)
+
+
+@pytest.mark.parametrize("model_key", ["splicing_psi", "splicing_log2odds"])
+def test_frac_realized_is_the_ratio(splicing_batch, model_key):
+    idata, _ = _fit(model_key, splicing_batch)
+    p = idata.posterior
+    got = np.asarray(p["frac_realized"])
+    want = np.asarray(p["dPSI_at_maxdose"]) / np.asarray(p["span_PSI"])
+    assert got == pytest.approx(want, rel=1e-6)
+
+
+def test_logEC50_is_the_psi_halfway_dose(splicing_batch):
+    """Model 4's native midpoint is on log2-odds and is a DIFFERENT dose; it must not be
+    the one called logEC50."""
+    idata, _ = _fit("splicing_log2odds", splicing_batch)
+    p = idata.posterior
+    assert not np.allclose(np.asarray(p["logEC50"]), np.asarray(p["logEC50_log2odds"]))
+
+
+def test_span_and_beta_are_signed(splicing_batch):
+    """HalfNormal would forbid repressed junctions; the prior must be two-sided."""
+    _, model = _fit("splicing_log2odds", splicing_batch)
+    cls, _ = _rv_spec(model, "span_log2odds")
+    assert "HalfNormal" not in cls
+
+
+def test_dead_model_config_keys_removed():
+    from dose_response.fitting import MODEL_CONFIG
+    for cfg in MODEL_CONFIG.values():
+        for dead in ("ppc_var", "obs_var", "treatment_idx_var"):
+            assert dead not in cfg, f"{dead} is never read and should be gone"

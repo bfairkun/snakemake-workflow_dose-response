@@ -37,3 +37,24 @@ def covariates(batch):
         "IFNa": batch["sample"].str.contains("IFNa").astype(int),
         "IFNg": batch["sample"].str.contains("IFNg").astype(int),
     })
+
+
+@pytest.fixture
+def splicing_batch():
+    """Synthetic junction counts: 3 arms, matched controls, 6 doses, switch-like response.
+
+    Self-contained so the suite never depends on project data.
+    """
+    import numpy as np
+    rng = np.random.default_rng(7)
+    rows = []
+    for rep in range(4):
+        rows.append(("DMSO_rep%d" % rep, "DMSO", 0.0, 3, 900))
+    for arm, ec50 in [("drugA", 1.0), ("drugB", 2.0), ("drugC", 2.5)]:
+        for d in [3.0, 10.0, 32.0, 100.0, 320.0, 1000.0]:
+            eta = -9.0 + 13.0 / (1 + np.exp(-2.0 * (np.log10(d) - ec50)))   # log2-odds
+            psi = 1 / (1 + np.exp(-eta * np.log(2)))
+            n = 800
+            rows.append((f"{arm}_{d:g}nM", arm, d, int(rng.binomial(n, psi)), n))
+    return pd.DataFrame(rows, columns=["sample", "treatment", "dose", "y", "n"]).assign(
+        featureID="chr1:100:200:clu_1_+")
