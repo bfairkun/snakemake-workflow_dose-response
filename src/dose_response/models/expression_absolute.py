@@ -1,7 +1,4 @@
-"""Model 3: absolute log2 abundance with a free baseline.
-
-Moved verbatim from scripts/BayesianDoseResponse_ByBatch.py; behaviour is unchanged.
-"""
+"""Model 3: absolute log2 abundance with a free baseline."""
 import numpy as np
 import pymc as pm
 
@@ -64,10 +61,6 @@ def fit_expression_absolute_model(data, samples=1000, args=None):
     priors, default_priors = parse_priors(args)
 
     # Prior location for `lower` comes from this feature's own control mean, following the
-    # idiom already used for logEC50 (location from the design, width fixed). With a width of
-    # 5 log2 units the prior is effectively flat next to the controls' likelihood contribution,
-    # so locating it on the data does not meaningfully double-count them; it just keeps the
-    # sampler in a sane region for a gene whose absolute abundance could be anywhere in ~0-15.
     lower_mu_data = float(np.mean(y_untreated)) if len(y_untreated) else 0.0
 
     with pm.Model(coords=coords) as model:
@@ -105,8 +98,6 @@ def fit_expression_absolute_model(data, samples=1000, args=None):
             logEC50_mu_data[t] = (log_doses.min() + log_doses.max()) / 2.0
 
         # slope stays per-treatment, as in model 1: gene-level expression aggregates multiple
-        # splice events, so an effective Hill coefficient above 1 is the expected signature of
-        # two responsive exons, and different drugs can legitimately show different slopes.
         slope_list = []
         logEC50_list = []
         for i, t in enumerate(treatments):
@@ -146,8 +137,6 @@ def fit_expression_absolute_model(data, samples=1000, args=None):
         pm.Deterministic("upper", lower + Delta)
 
         # Same definition as model 1: the dose at which the change from baseline is 2-fold.
-        # Model 1 writes this with `upper` because there lower == 0, so `upper` IS Delta.
-        # NaN whenever |Delta| < 1, i.e. when no 2-fold dose exists -- inherited on purpose.
         pm.Deterministic('ED2x', logEC50 - (1 / slope) * pm.math.log(pm.math.abs(Delta) - 1), dims="treatment")
 
         idata = pm.sample(samples, tune=1000, target_accept=0.95, random_seed=42, cores=1)

@@ -1,0 +1,177 @@
+---
+title: "Dose-response models"
+format:
+  html:
+    embed-resources: true
+    toc: true
+    toc-depth: 3
+    code-fold: true
+---
+
+Four models, one shape. Each fits a **log-logistic** curve in $x_s=\log_{10}(\text{dose}_s)$
+independently per feature, indexed by treatment arm so several arms of a series are fit jointly.
+They differ in the outcome they model, in whether the untreated level is a free parameter, and in
+the scale the curve is applied on.
+
+| symbol | meaning |
+|---|---|
+| $g$ | feature — a gene or a splice junction, fit **independently** of all others |
+| $s$ | sample |
+| $t(s)$ | treatment arm of sample $s$ |
+| $x_s$ | $\log_{10}$ dose; controls have dose $=0$ and get a separate likelihood term |
+| $\sigma(z)$ | logistic function $1/(1+e^{-z})$ |
+| $\mathbf z_s$ | covariate row for sample $s$ (optional) |
+
+## Naming
+
+Every parameter is `{role}[_{scale}]`. The scale tag names the **transform, not the
+normalization**, so the expression models work on CPM or TPM alike.
+
+| role | name | | scale tag | meaning |
+|---|---|---|---|---|
+| untreated level | `baseline` | | `log2` | log2 abundance, any normalization |
+| plateau − baseline | `span` | | `PSI` | proportion, 0–1 |
+| saturating level | `plateau` | | `log2odds` | $\log_2\frac{\text{PSI}}{1-\text{PSI}}$, i.e. **doublings of odds** |
+| logistic rate per decade | `rate` | | | |
+| Hill coefficient | `hill` | | | |
+| dose at half-maximal | `logEC50` | | | |
+
+Two conventions hold everywhere:
+
+- **`span = plateau − baseline`.** Positive means the treatment *raises* the outcome.
+- **`logEC50` is the dose at which the modelled outcome is halfway between its own baseline and
+  plateau** — on the PSI scale for both splicing models, the log2 scale for both expression models.
+
+# The models
+
+## 1 — `expression_logfc`
+
+Outcome is log2 fold-change, so the untreated level is pinned at zero and `span` is also the
+plateau.
+
+$$y_s \sim \mathcal N\!\left(\text{span}\cdot\sigma\big(\text{rate}_{t(s)}(x_s-\text{logEC50}_{t(s)})\big),\ \sigma_{\text{obs}}\right),
+\qquad y_{\text{ctl}} \sim \mathcal N(0,\ \sigma_{\text{obs}})$$
+
+## 2 — `splicing_psi`
+
+Beta-binomial on junction counts, logistic applied in **PSI** space.
+
+$$\psi_s = \text{baseline}_{\text{PSI}} + \text{span}_{\text{PSI}}\cdot\sigma\big(\text{rate}\,(x_s-\text{logEC50}_{t(s)})\big)$$
+
+$$y_s \sim \text{BetaBinom}\!\left(n_s,\ \psi_s\phi,\ (1-\psi_s)\phi\right)$$
+
+`rate` is shared across arms; only `logEC50` varies.
+
+## 3 — `expression_absolute`
+
+As model 1 but on absolute log2 abundance, so the baseline is free and its uncertainty propagates
+instead of being subtracted away.
+
+$$y_s \sim \mathcal N\!\left(\text{baseline}_{\log 2} + \text{span}_{\log 2}\cdot\sigma\big(\text{rate}_{t(s)}(x_s-\text{logEC50}_{t(s)})\big),\ \sigma_{\text{obs}}\right)$$
+
+## 4 — `splicing_log2odds`
+
+Same beta-binomial likelihood as model 2, but the logistic acts on **log2-odds**, which is the
+scale on which drug occupancy multiplies the inclusion/exclusion odds.
+
+$$\eta_s = A_s + (U-A_s)\,\sigma\big(\text{rate}\,(x_s-\text{logEC50}^{\text{odds}}_{t(s)})\big),
+\qquad \psi_s=\sigma(\eta_s\ln 2)$$
+
+$$A_s = \text{baseline}_{\log_2\text{odds}} + \mathbf z_s^{\!\top}\boldsymbol\beta,
+\qquad U = \text{baseline}_{\log_2\text{odds}} + \text{span}_{\log_2\text{odds}}$$
+
+Three commitments distinguish it:
+
+**The vertical scale is doublings of odds.** One unit is one doubling, which is the `EC2x` notion and
+the quantity Ishigami's efficacy parameter is defined by; $E_{\max}=2^{\text{span}}$. Choosing the
+vertical scale is free — it leaves `rate` and `logEC50` untouched, because the response scaling
+factors out of the sigmoid.
+
+**The covariate enters the floor only.** $U$ contains no $\boldsymbol\beta$, so the maximum attainable
+PSI is one number for every sample and arm: the claim that the ceiling is set by local
+competing-splice-site context, not by the drug or the secondary treatment. The same
+$\boldsymbol\beta$ applies to the dose-0 rows, and that shared coefficient across both likelihood
+terms is what identifies it.
+
+**The slope is parameterized through `hill`.** `rate` means something different at every locus, so a
+prior on it would imply a different cooperativity per junction — a 12-fold spread across the marker
+set. `hill` is comparable to the literature instead:
+
+$$\text{model 4:}\quad \text{hill}=\frac{\text{rate}\cdot|\text{span}_{\log_2\text{odds}}|}{4\log_2 10}
+\qquad
+\text{model 2:}\quad \text{hill}=\frac{\text{rate}\cdot\text{span}_{\text{PSI}}}{4\,m(1-m)\ln 10}$$
+
+with $m=(\text{baseline}_{\text{PSI}}+\text{plateau}_{\text{PSI}})/2$. Both replace $|\text{span}|$
+with $\sqrt{\text{span}^2+0.25^2}$ so `rate` stays finite as the span vanishes.
+
+# Priors
+
+Identical in models 2 and 4 wherever a parameter means the same thing.
+
+| parameter | prior | note |
+|---|---|---|
+| `baseline_log2odds` | $\mathcal N(\text{log2-odds of pooled control PSI},\ 3)$ | data-anchored |
+| `span_log2odds` | $t_{\nu=3}(0,\ 6)$ | heavy-tailed on purpose |
+| `hill` | $\text{LogNormal}(\log 1.5,\ 0.35)$ | 95% on $[0.76,\,2.98]$ |
+| `logEC50` | $\mathcal N(\text{arm's assayed dose midpoint},\ 3)$ | wide on purpose |
+| `phi` | $\text{Gamma}(2,\ 0.2)$ | |
+| `beta_log2odds` | $\mathcal N(0,\ 4)$ | signed |
+
+**Why $t$ rather than Normal for the span.** A Normal has one shape: its bulk and tails are welded to
+one parameter, and the mass beyond $k$ scale-units is a constant whatever $\sigma$ is. Reaching a
+large span therefore means moving the whole bulk out there. $\nu$ is a knob for tail weight relative
+to bulk — $t$ tails decay as $|x|^{-(\nu+1)}$ rather than $e^{-x^2/2\sigma^2}$ — so far-out mass is
+cheap. Equivalently, a $t$ is a Normal whose scale is itself uncertain, which is the honest state of
+knowledge.
+
+Reference spans in doublings: 1%→99% PSI is 13.3, 0.1%→99.9% is 19.9, 0.01%→99.99% is 26.6.
+
+**Why `logEC50` is wide.** These junctions mostly do not saturate near the top assayed dose, so the
+half-maximal point routinely lies outside the assayed range — up to 2.8 decades above the top dose.
+A prior tight around the midpoint pulls those back in and manufactures potency.
+
+**Why LogNormal for `hill`.** Near-tie with a matched Gamma (max CDF difference 0.088). LogNormal
+wins on two technicalities: its median is $e^\mu$ exactly, so the literature value is set in one
+step, and it is symmetric in log space, which is how a belief about a multiplicative quantity is
+held.
+
+# Interpretation cautions
+
+**A shared plateau means efficacy differences land in `logEC50`.** With one asymptote, `logEC50` is
+the only per-arm parameter, so a drug that plateaus lower is described as less potent rather than
+less effective. That is self-consistent but is a biological bet — and where nothing saturates, "less
+potent" and "less effective" fit the observed points equally well.
+
+**`span` is prior-driven where the curve does not flatten.** Hence `dPSI_at_maxdose`, the fitted PSI
+change at the arm's highest assayed dose, and `frac_realized`, the fraction of the fitted span the
+data actually demonstrate. **The posterior filter acts on `dPSI_at_maxdose`, not on the asymptote** —
+filtering the asymptote lets a curve that has barely moved pass on an extrapolated ceiling.
+
+**`beta` is not orthogonal to `rate`.** The covariate eats into the amplitude and so flattens the
+curve, since the max slope is $\text{rate}\cdot\text{span}_{\text{arm}}/4$. Small for junctions
+reaching PSI $\approx 1$, worst where the ceiling is low.
+
+**`span_sign_min`** is the health check: negative means some arm's baseline has crossed the shared
+asymptote and the shared-plateau assumption has failed at that locus.
+
+# Usage
+
+The workflow calls the CLI; `--help` documents every flag.
+
+```bash
+dose-response-fit --model splicing_log2odds \
+  --input DoseResponseModelling/SplicingPSI/DataBatched/Exp2/0.tsv.gz \
+  --output_pkl out.pkl --output_tsv out.tsv.gz \
+  --covariates config/dose_response_covariates.tsv \
+  --PreFilterByNumberReasonableObservedOutcomes n 5 10 100000 \
+  --PosteriorFilter dPSI_at_maxdose 0.95 0.1 1
+```
+
+In a notebook, no install needed:
+
+```python
+import sys
+sys.path.insert(0, ".../module_workflows/dose_response/src")
+from dose_response.models.splicing_log2odds import fit_model4b
+from dose_response import plotting as drplot
+```

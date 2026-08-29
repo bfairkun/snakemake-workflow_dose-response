@@ -1,7 +1,4 @@
-"""Pre-fit and post-fit feature filters.
-
-Moved verbatim from scripts/BayesianDoseResponse_ByBatch.py; behaviour is unchanged.
-"""
+"""Pre-fit and post-fit feature filters."""
 import logging
 from collections import defaultdict
 

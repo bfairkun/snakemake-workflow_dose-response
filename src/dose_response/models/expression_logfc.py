@@ -1,7 +1,4 @@
-"""Model 1: log2 fold-change expression, untreated level pinned at 0.
-
-Moved verbatim from scripts/BayesianDoseResponse_ByBatch.py; behaviour is unchanged.
-"""
+"""Model 1: log2 fold-change expression, untreated level pinned at 0."""
 import numpy as np
 import pymc as pm
 

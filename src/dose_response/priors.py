@@ -1,7 +1,4 @@
-"""Prior construction and validation.
-
-Moved verbatim from scripts/BayesianDoseResponse_ByBatch.py; behaviour is unchanged.
-"""
+"""Prior distribution construction from CLI specifications."""
 from collections import defaultdict
 
 import pymc as pm

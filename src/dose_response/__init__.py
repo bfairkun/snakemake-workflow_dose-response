@@ -1,12 +1,7 @@
 """Bayesian dose-response models for expression and splicing.
 
-Submodules are resolved lazily so that importing the package costs nothing and so that
-`dose_response.plotting` (which needs matplotlib) is never pulled into a compute env that
-only fits models. Access them as attributes:
-
-    import dose_response as dr
-    dr.priors.get_prior_dist(...)
-    from dose_response import plotting as drplot   # matplotlib only loaded here
+Submodules resolve lazily, which keeps `dose_response.plotting` and its matplotlib
+dependency out of compute environments that only fit models.
 """
 import importlib
 

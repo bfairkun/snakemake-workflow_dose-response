@@ -1,27 +1,8 @@
 """Design-matrix construction and validation for optional sample x covariate terms.
 
-Covariates are supplied as a SEPARATE TSV (one row per sample, one column per covariate),
-never merged into the long tidy data -- the batch files are long-format featureID x sample,
-so extra columns would be duplicated across every row of all N_BATCHES files.
-
-The covariate term is always OPTIONAL and always ADDITIONAL. The baseline/intercept
-(`lower`) is a first-class parameter of the models themselves; it is never supplied as a
-covariate column. An all-ones column is rejected for exactly that reason.
-
-Covariates enter as a VERTICAL offset only:
-    model 3 (expression):  y          += X_s . beta        (log2 abundance scale)
-    model 2 (splicing):    logit(psi) += X_s . beta        (logit scale, PSI is bounded)
-
-and the SAME beta is applied to the dose-0 (untreated) likelihood. That is what makes beta
-identifiable: the control contrast (e.g. DMSO+IFNa vs DMSO) never touches the dose-response
-curve, so it pins beta, which then carries onto the treated samples.
-
-This module is deliberately free of PyMC so the validation rules can be unit-tested cheaply.
-
-Typical use from a fitting script:
-
-    spec = prepare_covariates(path, cols, batch_df, ...)   # once per batch; validates + logs
-    Xt, Xu = design_for_feature(spec, feature_df)          # per feature; cheap and silent
+Covariates live in a separate TSV, one row per sample, and enter the models as a vertical
+offset applied to the treated and dose-0 likelihoods alike. Deliberately free of PyMC so the
+validation rules stay cheap to unit-test. See docs/models.qmd.
 """
 
 import logging
@@ -33,22 +14,13 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-# A column with this many or fewer distinct values in the series is treated as categorical
-# (an indicator), and is never scaled -- scaling a 0/1 column by sqrt(p(1-p)) would make the
-# coefficient depend on design balance, which differs between series, so betas would stop
-# being comparable.
+# Indicators are never scaled: that would make beta depend on design balance.
 _MAX_DISTINCT_FOR_BINARY = 2
 
 # Warn when a covariate is nearly indistinguishable from the dose design itself.
 _DOSE_COLLINEARITY_WARN = 0.8
 
-# Default prior scale for a covariate coefficient, matching the default prior on `Delta`
-# (Normal(0, 3)). Both are "an effect in log2 units", so they should share a scale. An
-# earlier Normal(0, 1) default visibly shrank real effects: for type-I ISGs under IFNa,
-# beta came out ~0.5 log2 below the naive control contrast, and -- worse -- the shrinkage
-# leaked into logEC50, because when a covariate effect (~2.5 log2) dwarfs the drug effect
-# (Delta ~0.3-0.8) the model compensates for an under-estimated offset by moving the curve.
-# Continuous covariates on other scales should get an explicit --covariate_prior instead.
+# Matches the default prior on the span; both are an effect in log2 units.
 DEFAULT_COVARIATE_PRIOR_SD = 3.0
 
 
@@ -247,18 +219,8 @@ def prepare_covariates(
                 "are fit independently, so there is no strength borrowed across genes."
             )
 
-    # --- collinearity within the vertical-offset design --------------------------------
-    # Check rank of [intercept | X], NOT [intercept | treatment dummies | X].
-    #
-    # The models have no per-treatment intercept: `treatment` indexes `slope` and `logEC50`,
-    # which change the SHAPE of the curve, not its vertical offset. The entire vertical-offset
-    # structure is `lower*1 + X.beta`, so that is what has to be full rank.
-    #
-    # Including treatment dummies here would reject the primary use case: in the C2C5 design
-    # IFNa == DMSO_IFNa + C2C5_IFNa, so a stimulus covariate is exactly a linear combination
-    # of the treatment indicators. That alignment is expected and harmless for a VERTICAL
-    # covariate -- supplying the offset the model otherwise lacks is the whole point. (It
-    # would be fatal for a horizontal/logEC50 covariate, which is why those are not supported.)
+    # Rank of [intercept | X], deliberately excluding treatment dummies: the models have no
+    # per-treatment intercept, so a stimulus covariate collinear with them is expected.
     Xfull = frame.loc[per_obs_samples, kept].to_numpy(dtype=float)
     stacked = np.column_stack([np.ones(len(per_obs_samples)), Xfull])
     rank = np.linalg.matrix_rank(stacked)

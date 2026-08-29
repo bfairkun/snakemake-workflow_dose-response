@@ -1,37 +1,4 @@
-"""Model 4: log-logistic on log2-odds PSI, shared asymptote, covariate on the floor.
-
-    eta2_i(x) = A2_i + (U2 - A2_i) * sigmoid(k * (x - e_t)),      x = log10(dose)
-    psi_i     = sigmoid(eta2_i * ln2)
-    A2_i      = a2 + z_i' beta2                (floor, log2-odds)
-    U2        = a2 + Delta2                    (shared asymptote, log2-odds)
-
-Every vertical parameter is in log2-odds, i.e. DOUBLINGS of the inclusion/exclusion odds, so
-Delta2 reads directly as "the drug moves the odds by Delta2 doublings" and Emax = 2**Delta2.
-Switching the vertical scale leaves k and e_t untouched, because the response scaling factors
-out of the sigmoid.
-
-Shared:   a2, Delta2, H, phi.      Per-arm: e_t (the only horizontal degree of freedom).
-The covariate enters the FLOOR only -- U2 contains no beta2 -- so the maximum attainable PSI is
-one number for every sample and every arm: the claim that the ceiling is set by local
-competing-splice-site context rather than by the drug or the secondary treatment.
-
-The slope is parameterized through the Hill coefficient rather than through k, because k means
-something different at every locus: the max slope of eta2 is k*|Delta2|/4, so
-
-    H = k * |Delta2| / (4 * log2(10))      <=>      k = 4 * log2(10) * H / |Delta2|
-
-A prior on H therefore means the same thing everywhere and is directly comparable to the
-literature (Ishigami 2024 reports 1.25-1.86 across SMN2 variants), whereas a prior on k would
-imply a different cooperativity for every junction depending on its amplitude.
-
-Delta2 and beta2 are both signed: junctions may be activated or repressed, and a secondary
-treatment may raise or lower the baseline.
-
-Moved from scratch/model4b.py. The prototype was a standalone script: it chdir'd, patched
-sys.path and monkeypatched pm.sample to silence the progress bar. Those are caller concerns,
-not library concerns, and are dropped here. None of them touch the RNG or the posterior, so
-fits stay bit-identical.
-"""
+"""Model 4: splicing PSI, beta-binomial, logistic applied in log2-odds space."""
 import numpy as np
 import pymc as pm
 
@@ -41,10 +8,6 @@ __all__ = ["fit_model4b", "LN2", "LOG2_10", "AMP_FLOOR2"]
 
 LN2, LOG2_10 = np.log(2.0), np.log2(10.0)
 
-# An amplitude this small cannot identify a slope, so |Delta2| is floored here when converting
-# H to k. Smoothly (sqrt of a sum of squares, not a hard clip) so the gradient stays defined,
-# and far below the smallest real amplitude in this data (1.24 doublings), so no fit is
-# distorted.
 AMP_FLOOR2 = 0.25
 
 
@@ -66,23 +29,9 @@ def fit_model4b(data, samples=1000, cov_spec=None, seed=42,
     # baseline anchored on the observed control odds, in log2-odds
     p0 = (y_u.sum()+0.5)/(n_u.sum()+1.0) if len(y_u) else (y_t.sum()+0.5)/(n_t.sum()+1.0)
     a2_mu = float(np.log(p0/(1-p0))/LN2)
-    # Per-arm location prior, centred on that arm's assayed log10-dose midpoint.
-    #
-    # The prior goes on EC_dPSI50Max -- the dose at which PSI sits halfway between floor and
-    # asymptote on the PSI scale -- not on e_t, the log2-odds-halfway point. Two reasons. It is
-    # the quantity that is actually interpreted and reported, and it is the one that plausibly
-    # lies inside the assayed range: e_t systematically sits above the top dose (by up to 2.8
-    # decades here) because these junctions do not saturate, so anchoring the prior there would
-    # manufacture potency.
-    #
-    # It also makes the prior IDENTICAL to model 2's. Model 2 fits its logistic in PSI space, so
-    # its logEC50 is by construction the PSI-halfway dose, and its prior is
-    # Normal(arm's assayed midpoint, 1.0). Measured on the marker junctions, model 2's logEC50
-    # and this EC_dPSI50Max agree to a median |difference| of 0.10 decades, against 0.37 for the
-    # log2-odds-halfway parameter -- they are the same quantity.
+    # Prior sits on the PSI-halfway dose, not the log2-odds-halfway point; see docs/models.qmd.
     ec_mu = [float((np.log10(td.loc[td.treatment==t,"dose"].astype(float)).min() +
                     np.log10(td.loc[td.treatment==t,"dose"].astype(float)).max())/2) for t in trts]
-    # arm-level covariate rows (constant within arm in these designs; the mean is used otherwise)
     X_arm = None
     if has_cov:
         X_arm = np.vstack([cov_spec.matrix(td.loc[td.treatment==t,"sample"].tolist()).mean(axis=0)
@@ -115,9 +64,7 @@ def fit_model4b(data, samples=1000, cov_spec=None, seed=42,
 
         A2_arm = a2 + off_arm
 
-        # Offset between the two halfway definitions. Depends on the floor, the asymptote and k,
-        # but NOT on the location parameter, so e_t = EC_dPSI50Max - delta is a shift with unit
-        # Jacobian and needs no density correction whichever one is sampled.
+        # Unit-Jacobian shift, so no density correction whichever location is sampled.
         psi_mid  = (pm.math.sigmoid(A2_arm*LN2) + pm.math.sigmoid(U2*LN2))/2.0
         eta2_mid = pm.math.log(psi_mid/(1-psi_mid))/LN2
         f_mid = pm.math.clip((eta2_mid - A2_arm)/(U2 - A2_arm), 1e-9, 1-1e-9)
@@ -152,8 +99,6 @@ def fit_model4b(data, samples=1000, cov_spec=None, seed=42,
 
         # ---- derived, per arm ------------------------------------------------------------
         amp2   = pm.Deterministic("amp2", U2 - A2_arm, dims="treatment")   # doublings, signed
-        # A sign flip means that arm's floor has crossed the shared asymptote, i.e. the
-        # shared-asymptote assumption has failed there. Positive => intact.
         pm.Deterministic("min_amp_signed", pm.math.min(amp2*pm.math.sgn(Delta2)))
         pm.Deterministic("Emax", 2.0**Delta2)
         pm.Deterministic("psi_floor", pm.math.sigmoid(A2_arm*LN2), dims="treatment")

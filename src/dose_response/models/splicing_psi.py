@@ -1,7 +1,4 @@
-"""Model 2: splicing PSI, beta-binomial, logistic applied in PSI space.
-
-Moved verbatim from scripts/BayesianDoseResponse_ByBatch.py; behaviour is unchanged.
-"""
+"""Model 2: splicing PSI, beta-binomial, logistic applied in PSI space."""
 import numpy as np
 import pymc as pm
 
@@ -122,22 +119,12 @@ def fit_splicing_model(data, samples=1000, args=None):
         Xb_treated, Xb_untreated = _covariate_offsets(args, cov_spec, X_treated, X_untreated)
 
         if Xb_treated is None:
-            # No covariates: byte-identical to the model as it has always been, so existing
-            # fits stay exactly reproducible.
             psi_treated_mu = lower + (upper - lower) / (
                 1 + pm.math.exp(-slope * (log10_dose - logEC50[treatment_idx]))
             )
             psi_untreated_mu = lower
         else:
-            # Covariates shift PSI on the LOGIT scale, because PSI is bounded: an additive
-            # offset in PSI space would push past 0/1. Both asymptotes shift by the same
-            # amount in logit space, which is what "vertical offset" means for a bounded
-            # outcome. The same beta is applied to the dose-0 observations below, which is
-            # what identifies it.
             eta_lower = pm.math.log(lower / (1 - lower))
-            # Effect size held fixed on the logit scale. On the default path this is exactly
-            # the delta_logit RV; if the user overrode the `upper` prior, recover it so the
-            # covariate branch behaves consistently either way.
             delta_logit_eff = (
                 delta_logit if delta_logit is not None
                 else pm.math.log(upper / (1 - upper)) - eta_lower

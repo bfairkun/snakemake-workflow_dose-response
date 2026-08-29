@@ -1,7 +1,4 @@
-"""Model registry and per-model configuration.
-
-Moved verbatim from scripts/BayesianDoseResponse_ByBatch.py; behaviour is unchanged.
-"""
+"""Model registry and per-model configuration."""
 from .models.expression_absolute import fit_expression_absolute_model
 from .models.expression_logfc import fit_gene_expression_model
 from .models.splicing_psi import fit_splicing_model

@@ -1,9 +1,4 @@
-"""Pieces shared by more than one model.
-
-`_covariate_offsets` returns (None, None) when there are no covariates so that no RV is
-created and the model graph stays byte-identical to the covariate-free version -- that is
-what keeps existing fits exactly reproducible.
-"""
+"""Pieces shared by more than one model."""
 import logging
 
 import pymc as pm

@@ -1,7 +1,4 @@
-"""Posterior summaries: per-treatment R^2 for each outcome type.
-
-Moved verbatim from scripts/BayesianDoseResponse_ByBatch.py; behaviour is unchanged.
-"""
+"""Per-treatment R^2 for each outcome type."""
 import numpy as np
 import pymc as pm
 

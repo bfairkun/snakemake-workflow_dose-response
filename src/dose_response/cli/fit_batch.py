@@ -1,10 +1,4 @@
-"""CLI: fit one batch of features.
-
-`main` is left whole rather than split into an io module: Phase A of the refactor is a
-mechanical move, and carving up the driver would add risk for no analytical gain.
-
-Moved verbatim from scripts/BayesianDoseResponse_ByBatch.py; behaviour is unchanged.
-"""
+"""CLI: fit one batch of features."""
 import argparse
 import logging
 import pickle
@@ -42,8 +36,89 @@ from ..summarize import r2_by_treatment_expression, r2_by_treatment_splicing
 __all__ = ["main", "parse_args", "setup_logging"]
 
 
+EPILOG = """
+MODELS
+  Each fits a log-logistic curve in log10(dose), independently per feature, indexed by
+  treatment arm so several arms of a series are fit jointly.
+
+    1  expression_logfc      log2 fold-change; untreated level pinned at 0
+    2  splicing_psi          beta-binomial on junction counts; logistic in PSI space
+    3  expression_absolute   absolute log2 abundance; free baseline
+    4  splicing_log2odds     beta-binomial; logistic in log2-odds (doublings of odds)
+
+  Full specification with equations and priors: docs/models.qmd in this repo.
+
+INPUT
+  A long TSV, one row per feature x sample. Required: featureID, treatment, dose, plus the
+  outcome columns for the chosen model -- `y` for the expression models, `y` and `n` for the
+  splicing models. dose == 0 marks a sample as untreated; those rows get their own likelihood
+  term and are what identify the baseline (and any covariate offset).
+
+FILTERS
+  Pre-fit filters are cheap and run before sampling:
+
+    --AbsSpearmanPreFilter 0.4
+        skip a feature unless |Spearman(dose, outcome)| reaches this in some arm
+
+    --PreFilterByNumberReasonableObservedOutcomes VAR MIN_COUNT LOW HIGH
+        require at least MIN_COUNT observations with VAR inside [LOW, HIGH]. Repeatable; all
+        must pass. Bounds are in the units of VAR, so for log2 data they are log2 units.
+
+  Post-fit filters drop a feature after sampling unless a posterior quantity clears a
+  credible-interval test:
+
+    --PosteriorFilter PARAM FRACTION LOW HIGH
+        keep only if FRACTION of the posterior for PARAM lies inside [LOW, HIGH]. Repeatable;
+        any one passing is enough, so use a pair for a two-sided effect.
+
+  For splicing, filter on the change the assayed doses actually demonstrate rather than on the
+  extrapolated asymptote:
+
+    --PosteriorFilter dPSI_at_maxdose 0.95 0.1 1
+    --PosteriorFilter dPSI_at_maxdose 0.95 -1 -0.1
+
+PRIORS
+  --prior PARAM TREATMENT FAMILY [ARGS...]     override for one arm ("ALL" for every arm)
+  --prior_default PARAM FAMILY [ARGS...]       override the default for a parameter
+
+    --prior_default hill LogNormal 0.405 0.35
+    --prior logEC50 Branaplam Normal 1.0 0.5
+
+COVARIATES
+  --covariates FILE
+      Separate TSV, one row per sample, one column per covariate. Enters as a vertical offset
+      applied to the treated AND the dose-0 rows with the same coefficient -- that shared
+      coefficient across both likelihood terms is what identifies it.
+
+      Consequences worth knowing before use:
+        * the covariate must vary among the dose-0 samples, or it is not identified;
+        * an all-ones column is rejected -- the baseline is a model parameter, not a covariate;
+        * a column constant within a series is dropped, so one global file can serve every
+          series and be inert where it does not apply;
+        * coefficients are unscaled by default, so beta stays in the outcome's own units.
+
+  --covariate_cols A B C        use only these columns
+  --covariate_prior COL FAMILY [ARGS...]
+  --scale_covariates            centre and scale continuous columns (indicators never scaled)
+  --max_covariate_fraction 0.25 refuse if covariates exceed this fraction of the sample count
+
+EXAMPLE
+  dose-response-fit --model splicing_log2odds \
+      --input DataBatched/Exp2/0.tsv.gz \
+      --output_pkl out.pkl --output_tsv out.tsv.gz \
+      --covariates config/dose_response_covariates.tsv \
+      --PreFilterByNumberReasonableObservedOutcomes n 5 10 100000 \
+      --PosteriorFilter dPSI_at_maxdose 0.95 0.1 1
+"""
+
+
 def parse_args(args=None):
-    parser = argparse.ArgumentParser(description="Fit Bayesian Dose Response Model for Gene Expression by Batch")
+    parser = argparse.ArgumentParser(
+        prog="dose-response-fit",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="Fit a Bayesian dose-response model to one batch of features.",
+        epilog=EPILOG,
+    )
     parser.add_argument(
         '--model', type=int, required=True, choices=[1, 2, 3],
         help="Which model to use:\n\n1: Intended to model expression. The outcome variable y represents the log2 fold change in expression. The model uses a three-parameter log-logistic dose–response function to predict y, where the slope and the EC50 (the dose at which half the maximal effect is observed) vary by treatment, while the upper asymptote (maximum effect) is shared across treatments.\n\n2: Intended to model splicing. The outcome is a count of inclusion reads y out of total reads n for each observation. We model this using a beta-binomial likelihood to account for overdispersion, where the mean inclusion proportion (PSI) is linked to dose using a four-parameter log-logistic function. In this model, the EC50 varies by treatment, while the upper and lower asymptotes and the slope are shared across treatments.\n\n3: Intended to model expression on an ABSOLUTE log2 abundance scale (e.g. log2 TMM-CPM) rather than a log2 fold change. Identical curve shape to model 1, but the untreated level is a free parameter `lower` instead of being pinned at 0, so baseline uncertainty is propagated instead of assumed away, and `Delta` (= upper - lower) carries the effect size. Note `Delta` in model 3 is the same quantity model 1 calls `upper`, so their priors are directly comparable. Supports optional sample x covariate terms."
