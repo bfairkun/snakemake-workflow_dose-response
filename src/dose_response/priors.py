@@ -3,24 +3,38 @@ from collections import defaultdict
 
 import pymc as pm
 
-__all__ = ["get_prior_dist", "parse_priors"]
+__all__ = ["FAMILIES", "family_help", "get_prior_dist", "parse_priors"]
 
 
-# --- Flexible prior parsing and mapping ---
+FAMILIES = {
+    "Normal": (pm.Normal, ("mu", "sigma")),
+    "StudentT": (pm.StudentT, ("nu", "mu", "sigma")),
+    "LogNormal": (pm.LogNormal, ("mu", "sigma")),
+    "Gamma": (pm.Gamma, ("alpha", "beta")),
+    "Uniform": (pm.Uniform, ("lower", "upper")),
+    "HalfNormal": (pm.HalfNormal, ("sigma",)),
+    "HalfCauchy": (pm.HalfCauchy, ("beta",)),
+    "Beta": (pm.Beta, ("alpha", "beta")),
+    "Exponential": (pm.Exponential, ("lam",)),
+}
+
+
+def family_help():
+    return "; ".join(f"{k} {' '.join(v[1])}" for k, v in FAMILIES.items())
+
+
 def get_prior_dist(family, params, name, dims=None):
-    dist_map = {
-        "Normal": pm.Normal,
-        "Gamma": pm.Gamma,
-        "Uniform": pm.Uniform,
-        "HalfNormal": pm.HalfNormal,
-        "HalfCauchy": pm.HalfCauchy,
-        # Add more as needed
-    }
-    if family not in dist_map:
-        raise ValueError(f"Unknown prior family: {family}")
-    dist = dist_map[family]
-    kwargs = {"dims": dims} if dims else {}
-    return dist(name, *params, **kwargs)
+    if family not in FAMILIES:
+        raise ValueError(f"Unknown prior family {family!r}. Available: {family_help()}")
+    dist, names = FAMILIES[family]
+    if len(params) > len(names):
+        raise ValueError(f"{family} takes at most {len(names)} parameters "
+                         f"({' '.join(names)}), got {len(params)}: {list(params)}")
+    kwargs = dict(zip(names, params))
+    if dims:
+        kwargs["dims"] = dims
+    return dist(name, **kwargs)
+
 
 def parse_priors(args):
     priors = defaultdict(dict)

@@ -1,34 +1,36 @@
-"""The Phase B specification, as executable assertions.
+"""The model specification, as executable assertions.
 
 Every test here is marked xfail(strict=True) while Phase A is the current state. The moment
 Phase B lands, pytest reports XPASS -- which is a failure under strict -- and the marker
 must be removed. That is the point: the spec cannot be quietly dropped, and it cannot be
 quietly half-implemented either.
 
-Sourced from docs/dose_response_refactor_plan.md sections 2 and 3.
+Companion to docs/models.qmd.
 """
 import numpy as np
 import pytest
-
-pytestmark = pytest.mark.xfail(strict=True, reason="Phase B not yet implemented")
 
 LN2, LOG2_10, LN10 = np.log(2.0), np.log2(10.0), np.log(10.0)
 
 
 def _rv_spec(model, name):
-    """(distribution class name, [parameter values]) for a free RV in a fitted model."""
+    """(distribution class name, [parameter values]) for a free RV.
+
+    PyMC RV nodes are (rng, size, *dist_params), so parameters start at index 2. Note the
+    stored parameterization is not always the constructor's: Gamma keeps scale, not rate.
+    """
     for v in model.free_RVs:
         if v.name == name:
             cls = type(v.owner.op).__name__
-            params = [np.asarray(i.eval()).ravel()[0] for i in v.owner.inputs[3:]]
+            params = [float(np.asarray(i.eval()).ravel()[0]) for i in v.owner.inputs[2:]]
             return cls, params
     raise AssertionError(f"{name!r} is not a free RV; free_RVs = "
                          f"{sorted(v.name for v in model.free_RVs)}")
 
 
 def _fit(which, batch, **kw):
-    from dose_response.fitting import MODEL_CONFIG
-    return MODEL_CONFIG[which]["fit_func"](batch, samples=50, **kw)
+    from dose_response.fitting import MODEL_REGISTRY
+    return MODEL_REGISTRY[which]["fit_func"](batch, samples=50, **kw)
 
 
 # --- naming -------------------------------------------------------------------------------
@@ -112,7 +114,8 @@ def test_phi_prior_shared(splicing_batch, model_key):
     _, model = _fit(model_key, splicing_batch)
     cls, params = _rv_spec(model, "phi")
     assert "Gamma" in cls
-    assert params[0] == pytest.approx(2.0)
+    alpha, scale = params            # PyMC stores scale, so beta = 1/scale
+    assert (alpha, 1 / scale) == pytest.approx((2.0, 0.2))
 
 
 # --- semantics ----------------------------------------------------------------------------
@@ -137,8 +140,11 @@ def test_hill_matches_max_slope(splicing_batch, model_key):
         span = np.abs(np.asarray(p["span_log2odds"]).ravel())
         implied = rate * span / (4 * LOG2_10)
     else:
-        base = np.asarray(p["baseline_PSI"]).ravel()
-        plat = np.asarray(p["plateau_PSI"]).ravel()
+        # Model 2 derives rate from the REFERENCE asymptotes, so take arm 0; the per-arm
+        # values coincide with it whenever there is no covariate.
+        sig = lambda z: 1 / (1 + np.exp(-z))
+        base = sig(np.asarray(p["baseline_log2odds"]).ravel() * LN2)
+        plat = sig(np.asarray(p["plateau_log2odds"]).ravel() * LN2)
         m = (base + plat) / 2
         implied = rate * (plat - base) / (4 * m * (1 - m) * LN10)
     assert implied == pytest.approx(hill, rel=0.02)

@@ -23,13 +23,16 @@ from ..fitting import (
     COVARIATE_INDEXED_SUMMARY_VARS,
     COVARIATE_SUPPORTED_MODELS,
     MODEL_CONFIG,
+    MODEL_NAMES,
     TREATMENT_INDEXED_PARAMS,
+    resolve_model,
     validate_covariate_args,
     validate_treatment_specific_priors,
 )
-from ..models.expression_absolute import fit_expression_absolute_model
-from ..models.expression_logfc import fit_gene_expression_model
-from ..models.splicing_psi import fit_splicing_model
+from ..models.expression_absolute import fit_expression_absolute
+from ..models.expression_logfc import fit_expression_logfc
+from ..models.splicing_log2odds import fit_splicing_log2odds
+from ..models.splicing_psi import fit_splicing_psi
 from ..priors import get_prior_dist, parse_priors
 from ..summarize import r2_by_treatment_expression, r2_by_treatment_splicing
 
@@ -84,6 +87,11 @@ PRIORS
     --prior_default hill LogNormal 0.405 0.35
     --prior logEC50 Branaplam Normal 1.0 0.5
 
+  Families and their parameters, in order:
+    Normal mu sigma; StudentT nu mu sigma; LogNormal mu sigma; Gamma alpha beta;
+    Uniform lower upper; HalfNormal sigma; HalfCauchy beta; Beta alpha beta;
+    Exponential lam
+
 COVARIATES
   --covariates FILE
       Separate TSV, one row per sample, one column per covariate. Enters as a vertical offset
@@ -120,9 +128,10 @@ def parse_args(args=None):
         epilog=EPILOG,
     )
     parser.add_argument(
-        '--model', type=int, required=True, choices=[1, 2, 3],
-        help="Which model to use:\n\n1: Intended to model expression. The outcome variable y represents the log2 fold change in expression. The model uses a three-parameter log-logistic dose–response function to predict y, where the slope and the EC50 (the dose at which half the maximal effect is observed) vary by treatment, while the upper asymptote (maximum effect) is shared across treatments.\n\n2: Intended to model splicing. The outcome is a count of inclusion reads y out of total reads n for each observation. We model this using a beta-binomial likelihood to account for overdispersion, where the mean inclusion proportion (PSI) is linked to dose using a four-parameter log-logistic function. In this model, the EC50 varies by treatment, while the upper and lower asymptotes and the slope are shared across treatments.\n\n3: Intended to model expression on an ABSOLUTE log2 abundance scale (e.g. log2 TMM-CPM) rather than a log2 fold change. Identical curve shape to model 1, but the untreated level is a free parameter `lower` instead of being pinned at 0, so baseline uncertainty is propagated instead of assumed away, and `Delta` (= upper - lower) carries the effect size. Note `Delta` in model 3 is the same quantity model 1 calls `upper`, so their priors are directly comparable. Supports optional sample x covariate terms."
-    )
+        '--model', required=True, metavar="MODEL",
+        help="Model name, or its integer alias: "
+             + ", ".join(f"{n} ({k})" for k, n in sorted(MODEL_NAMES.items(),
+                                                         key=lambda kv: kv[1])))
     parser.add_argument('--input', required=True, help="Batch input file with data. Required columns: featureID, dose, treatment, columns for outcome variables (e.g., y for model 1; y and n for model 2). If dose is 0, the sample is considered untreated.")
     parser.add_argument('--output_pkl', required=True, help="Output pickle file")
     parser.add_argument('--output_tsv', required=True, help="Output summary tsv file")

@@ -6,10 +6,10 @@ from ..covariates import design_for_feature
 from ..priors import get_prior_dist, parse_priors
 from ._common import _covariate_offsets
 
-__all__ = ["fit_gene_expression_model"]
+__all__ = ["fit_expression_logfc"]
 
 
-def fit_gene_expression_model(data, samples=1000, args=None):
+def fit_expression_logfc(data, samples=1000, args=None):
     data = data.copy()   # `data` holds one feature's rows, subset by the caller
 
     is_treated = data["dose"].notna() & (data["dose"] != 0)
@@ -40,15 +40,15 @@ def fit_gene_expression_model(data, samples=1000, args=None):
         y_treated_data = pm.Data("y_treated", y_treated, dims="obs_treated")
         y_untreated_data = pm.Data("y_untreated", y_untreated, dims="obs_untreated")
 
-        # Flexible priors for upper
-        if "upper" in priors and "ALL" in priors["upper"]:
-            family, params_ = priors["upper"]["ALL"]
-            upper = get_prior_dist(family, params_, "upper")
-        elif "upper" in default_priors:
-            family, params_ = default_priors["upper"]
-            upper = get_prior_dist(family, params_, "upper")
+        # Flexible priors for span_log2
+        if "span_log2" in priors and "ALL" in priors["span_log2"]:
+            family, params_ = priors["span_log2"]["ALL"]
+            span_log2 = get_prior_dist(family, params_, "span_log2")
+        elif "span_log2" in default_priors:
+            family, params_ = default_priors["span_log2"]
+            span_log2 = get_prior_dist(family, params_, "span_log2")
         else:
-            upper = pm.Normal('upper', mu=0, sigma=3.0)
+            span_log2 = pm.Normal('span_log2', mu=0, sigma=3.0)
 
         # logEC50 default prior centered at midpoint of each treatment's assayed log10-dose range.
         # sigma=1.5 keeps the same width as the old prior — only the center moves.
@@ -59,19 +59,19 @@ def fit_gene_expression_model(data, samples=1000, args=None):
             )
             logEC50_mu_data[t] = (log_doses.min() + log_doses.max()) / 2.0
 
-        # Flexible priors for slope and logEC50 (per-treatment)
+        # Flexible priors for rate and logEC50 (per-treatment)
         slope_list = []
         logEC50_list = []
         for i, t in enumerate(treatments):
             # Slope
-            if "slope" in priors and t in priors["slope"]:
-                family, params_ = priors["slope"][t]
-                slope_list.append(get_prior_dist(family, params_, f"slope_{t}"))
-            elif "slope" in default_priors:
-                family, params_ = default_priors["slope"]
-                slope_list.append(get_prior_dist(family, params_, f"slope_{t}"))
+            if "rate" in priors and t in priors["rate"]:
+                family, params_ = priors["rate"][t]
+                slope_list.append(get_prior_dist(family, params_, f"rate_{t}"))
+            elif "rate" in default_priors:
+                family, params_ = default_priors["rate"]
+                slope_list.append(get_prior_dist(family, params_, f"rate_{t}"))
             else:
-                slope_list.append(pm.Gamma(f"slope_{t}", alpha=4, beta=1.5))
+                slope_list.append(pm.Gamma(f"rate_{t}", alpha=4, beta=1.5))
             # logEC50
             if "logEC50" in priors and t in priors["logEC50"]:
                 family, params_ = priors["logEC50"][t]
@@ -81,19 +81,21 @@ def fit_gene_expression_model(data, samples=1000, args=None):
                 logEC50_list.append(get_prior_dist(family, params_, f"logEC50_{t}"))
             else:
                 logEC50_list.append(pm.Normal(f"logEC50_{t}", mu=logEC50_mu_data[t], sigma=1.5))
-        slope = pm.Deterministic("slope", pm.math.stack(slope_list), dims="treatment")
+        rate = pm.Deterministic("rate", pm.math.stack(slope_list), dims="treatment")
         logEC50 = pm.Deterministic("logEC50", pm.math.stack(logEC50_list), dims="treatment")
 
         sigma = pm.HalfNormal('sigma', sigma=1)
 
-        slope_t = slope[treatment_idx]
+        slope_t = rate[treatment_idx]
         logEC50_t = logEC50[treatment_idx]
-        y_treated_mu = upper / (1 + pm.math.exp(-slope_t * (log10_dose - logEC50_t)))
+        y_treated_mu = span_log2 / (1 + pm.math.exp(-slope_t * (log10_dose - logEC50_t)))
 
         pm.Normal('y_treated_mu', mu=y_treated_mu, sigma=sigma, observed=y_treated_data, dims="obs_treated")
         pm.Normal('y_untreated_mu', mu=0, sigma=sigma, observed=y_untreated_data, dims="obs_untreated")
 
-        pm.Deterministic('ED2x', logEC50 - (1 / slope) * pm.math.log(pm.math.abs(upper) - 1), dims="treatment")
+        pm.Deterministic("baseline_log2", pm.math.constant(0.0))
+        pm.Deterministic("plateau_log2", span_log2)
+        pm.Deterministic('logEC2x', logEC50 - (1 / rate) * pm.math.log(pm.math.abs(span_log2) - 1), dims="treatment")
 
         idata = pm.sample(samples, tune=1000, target_accept=0.95, random_seed=42, cores=1)
 
