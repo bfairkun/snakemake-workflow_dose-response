@@ -243,6 +243,7 @@ def setup_logging(verbose):
 
 def main(args=None):
     args = parse_args(args)
+    args.model = resolve_model(args.model)
     setup_logging(args.verbose)
     logger = logging.getLogger(__name__)
 

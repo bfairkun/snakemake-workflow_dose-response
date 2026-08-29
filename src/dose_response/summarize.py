@@ -29,7 +29,7 @@ def r2_by_treatment_expression(idata, model):
 
 def r2_by_treatment_splicing(idata, model):
     # Posterior mean PSI for each treated sample
-    psi_pred = idata.posterior["psi_treated_mu"].mean(dim=("chain", "draw")).values
+    psi_pred = idata.posterior["psi_treated"].mean(dim=("chain", "draw")).values
     # Use y and n from constant_data for observed PSI
     y_obs = idata.constant_data['y_treated'].values
     n_obs = idata.constant_data['n_treated'].values
