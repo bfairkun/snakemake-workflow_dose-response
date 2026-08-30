@@ -147,15 +147,15 @@ def fit_splicing_log2odds(data, samples=1000, args=None):
         span_by_arm = pm.Deterministic("span_by_arm_log2odds", plateau - floor_by_arm,
                                        dims="treatment")
         pm.Deterministic("span_sign_min", pm.math.min(span_by_arm * pt.sign(span)))
-        pm.Deterministic("baseline_PSI", psi_floor_arm, dims="treatment")
-        span_psi = pm.Deterministic("span_PSI", psi_plateau - psi_floor_arm, dims="treatment")
+        pm.Deterministic("baseline_PSI", pm.math.sigmoid(baseline * LN2))
+        pm.Deterministic("span_PSI", psi_plateau - pm.math.sigmoid(baseline * LN2))
+        span_arm = psi_plateau - psi_floor_arm
 
         eta_top = floor_by_arm + (plateau - floor_by_arm) / (
             1 + pm.math.exp(-rate * (x_top - logEC50_log2odds)))
         dpsi_top = pm.Deterministic(
             "dPSI_at_maxdose", pm.math.sigmoid(eta_top * LN2) - psi_floor_arm, dims="treatment")
-        pm.Deterministic("frac_realized", dpsi_top / span_psi, dims="treatment")
+        pm.Deterministic("frac_realized", dpsi_top / span_arm, dims="treatment")
 
-        idata = pm.sample(samples, tune=1000, chains=4, cores=1, random_seed=42,
-                          target_accept=0.9, return_inferencedata=True)
+        idata = pm.sample(samples, tune=1000, target_accept=0.95, random_seed=42, cores=1)
     return idata, model

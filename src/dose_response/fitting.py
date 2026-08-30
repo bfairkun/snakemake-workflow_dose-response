@@ -1,8 +1,9 @@
 """Model registry and per-model configuration."""
+from functools import partial
+
 from .models.expression_absolute import fit_expression_absolute
 from .models.expression_logfc import fit_expression_logfc
-from .models.splicing_log2odds import fit_splicing_log2odds
-from .models.splicing_psi import fit_splicing_psi
+from .models.splicing import fit_splicing
 from .summarize import r2_by_treatment_expression, r2_by_treatment_splicing
 
 __all__ = ["MODEL_CONFIG", "MODEL_REGISTRY", "MODEL_NAMES", "resolve_model",
@@ -23,14 +24,17 @@ MODEL_CONFIG = {
         "r2_func": r2_by_treatment_expression,
     },
     2: {
-        "name": "splicing_psi",
-        "fit_func": fit_splicing_psi,
+        "name": "splicing_psi_vertical",
+        "description": "logistic on PSI; covariate shifts floor and ceiling together",
+        "fit_func": partial(fit_splicing, scale="psi",
+                             covariate_target="vertical"),
         "spearman_func": _PSI_OUTCOME,
         "summary_vars_scalar": ["baseline_log2odds", "span_log2odds", "plateau_log2odds",
-                                "hill", "rate", "phi"],
-        "summary_vars_treatment": ["baseline_PSI", "plateau_PSI", "span_PSI", "logEC50",
-                                   "logEC50_log2odds", "logEC_dPSI05", "logEC2x_odds",
-                                   "dPSI_at_maxdose", "frac_realized"],
+                                "baseline_PSI", "plateau_PSI", "span_PSI",
+                                "hill", "rate", "span_sign_min", "phi"],
+        "summary_vars_treatment": ["span_by_arm_log2odds", "logEC50", "logEC50_log2odds",
+                                   "logEC_dPSI05", "logEC2x_odds", "dPSI_at_maxdose",
+                                   "frac_realized"],
         "r2_func": r2_by_treatment_splicing,
     },
     3: {
@@ -42,19 +46,57 @@ MODEL_CONFIG = {
         "r2_func": r2_by_treatment_expression,
     },
     4: {
-        "name": "splicing_log2odds",
-        "fit_func": fit_splicing_log2odds,
+        "name": "splicing_log2odds_sharedceiling",
+        "description": "logistic on log2-odds; covariate shifts the floor only",
+        "fit_func": partial(fit_splicing, scale="log2odds",
+                             covariate_target="sharedceiling"),
         "spearman_func": _PSI_OUTCOME,
         "summary_vars_scalar": ["baseline_log2odds", "span_log2odds", "plateau_log2odds",
-                                "hill", "rate", "plateau_PSI", "span_sign_min", "phi"],
-        "summary_vars_treatment": ["baseline_PSI", "span_PSI", "span_by_arm_log2odds",
-                                   "logEC50", "logEC50_log2odds", "dPSI_at_maxdose",
+                                "baseline_PSI", "plateau_PSI", "span_PSI",
+                                "hill", "rate", "span_sign_min", "phi"],
+        "summary_vars_treatment": ["span_by_arm_log2odds", "logEC50", "logEC50_log2odds",
+                                   "logEC_dPSI05", "logEC2x_odds", "dPSI_at_maxdose",
+                                   "frac_realized"],
+        "r2_func": r2_by_treatment_splicing,
+    },
+    5: {
+        "name": "splicing_psi_sharedceiling",
+        "description": "logistic on PSI; covariate shifts the floor only",
+        "fit_func": partial(fit_splicing, scale="psi",
+                             covariate_target="sharedceiling"),
+        "spearman_func": _PSI_OUTCOME,
+        "summary_vars_scalar": ["baseline_log2odds", "span_log2odds", "plateau_log2odds",
+                                "baseline_PSI", "plateau_PSI", "span_PSI",
+                                "hill", "rate", "span_sign_min", "phi"],
+        "summary_vars_treatment": ["span_by_arm_log2odds", "logEC50", "logEC50_log2odds",
+                                   "logEC_dPSI05", "logEC2x_odds", "dPSI_at_maxdose",
+                                   "frac_realized"],
+        "r2_func": r2_by_treatment_splicing,
+    },
+    6: {
+        "name": "splicing_log2odds_vertical",
+        "description": "logistic on log2-odds; covariate shifts floor and ceiling together",
+        "fit_func": partial(fit_splicing, scale="log2odds",
+                             covariate_target="vertical"),
+        "spearman_func": _PSI_OUTCOME,
+        "summary_vars_scalar": ["baseline_log2odds", "span_log2odds", "plateau_log2odds",
+                                "baseline_PSI", "plateau_PSI", "span_PSI",
+                                "hill", "rate", "span_sign_min", "phi"],
+        "summary_vars_treatment": ["span_by_arm_log2odds", "logEC50", "logEC50_log2odds",
+                                   "logEC_dPSI05", "logEC2x_odds", "dPSI_at_maxdose",
                                    "frac_realized"],
         "r2_func": r2_by_treatment_splicing,
     },
 }
 
 MODEL_NAMES = {cfg["name"]: num for num, cfg in MODEL_CONFIG.items()}
+
+# Short aliases kept so existing configs keep resolving.
+MODEL_ALIASES = {
+    "splicing_psi": 2,
+    "splicing_log2odds": 4,
+}
+MODEL_NAMES.update(MODEL_ALIASES)
 MODEL_REGISTRY = {**MODEL_CONFIG, **{name: MODEL_CONFIG[num] for name, num in MODEL_NAMES.items()}}
 
 
@@ -73,17 +115,15 @@ def resolve_model(spec):
                                                                  key=lambda kv: kv[1])))
 
 
-COVARIATE_INDEXED_SUMMARY_VARS = {1: [], 2: ["beta_log2odds"], 3: ["beta_log2"],
-                                  4: ["beta_log2odds"]}
+_SPLICING = (2, 4, 5, 6)
 
-TREATMENT_INDEXED_PARAMS = {
-    1: {"logEC50", "rate"},
-    2: {"logEC50"},
-    3: {"logEC50", "rate"},
-    4: {"logEC50"},
-}
+COVARIATE_INDEXED_SUMMARY_VARS = {1: [], 3: ["beta_log2"],
+                                  **{k: ["beta_log2odds"] for k in _SPLICING}}
 
-COVARIATE_SUPPORTED_MODELS = {1: False, 2: True, 3: True, 4: True}
+TREATMENT_INDEXED_PARAMS = {1: {"logEC50", "rate"}, 3: {"logEC50", "rate"},
+                            **{k: {"logEC50"} for k in _SPLICING}}
+
+COVARIATE_SUPPORTED_MODELS = {1: False, 3: True, **{k: True for k in _SPLICING}}
 
 
 def validate_covariate_args(args, model_num):

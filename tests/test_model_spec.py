@@ -151,12 +151,74 @@ def test_hill_matches_max_slope(splicing_batch, model_key):
 
 
 @pytest.mark.parametrize("model_key", ["splicing_psi", "splicing_log2odds"])
-def test_frac_realized_is_the_ratio(splicing_batch, model_key):
+def test_dPSI_at_maxdose_and_frac_realized(splicing_batch, model_key):
+    """Reconstruct both from the primitives rather than from each other.
+
+    Dividing dPSI_at_maxdose by span_PSI would be a tautology and would not catch the wrong
+    dose or the wrong baseline, so the curve is rebuilt here from baseline, span, rate and
+    logEC50 and evaluated at the arm's own highest assayed dose.
+    """
     idata, _ = _fit(model_key, splicing_batch)
     p = idata.posterior
-    got = np.asarray(p["frac_realized"])
-    want = np.asarray(p["dPSI_at_maxdose"]) / np.asarray(p["span_PSI"])
-    assert got == pytest.approx(want, rel=1e-6)
+    sig = lambda z: 1 / (1 + np.exp(-z))
+    base = np.asarray(p["baseline_log2odds"]).ravel()
+    span = np.asarray(p["span_log2odds"]).ravel()
+    rate = np.asarray(p["rate"]).ravel()
+    b, pl = sig(base * LN2), sig((base + span) * LN2)
+    x_top = np.log10(splicing_batch.loc[splicing_batch.dose > 0, "dose"].max())
+    for arm in map(str, p.coords["treatment"].values):
+        e50 = np.asarray(p["logEC50"].sel(treatment=arm)).ravel()
+        if model_key == "splicing_psi":
+            psi_top = b + (pl - b) * sig(rate * (x_top - e50))
+        else:
+            eodd = np.asarray(p["logEC50_log2odds"].sel(treatment=arm)).ravel()
+            psi_top = sig((base + span * sig(rate * (x_top - eodd))) * LN2)
+        want_d = psi_top - b
+        got_d = np.asarray(p["dPSI_at_maxdose"].sel(treatment=arm)).ravel()
+        assert got_d == pytest.approx(want_d, abs=1e-6), "wrong dose or wrong baseline"
+        got_f = np.asarray(p["frac_realized"].sel(treatment=arm)).ravel()
+        assert got_f == pytest.approx(want_d / (pl - b), rel=1e-6)
+
+
+@pytest.mark.parametrize("model_key", ["splicing_psi", "splicing_log2odds"])
+def test_asymptotes_are_reference_level_and_consistent(splicing_batch, model_key):
+    """sigmoid(x_log2odds * ln2) == x_PSI must hold, so the two scales name one quantity."""
+    idata, _ = _fit(model_key, splicing_batch)
+    p = idata.posterior
+    sig = lambda z: 1 / (1 + np.exp(-z))
+    for odds, psi in [("baseline_log2odds", "baseline_PSI"),
+                      ("plateau_log2odds", "plateau_PSI")]:
+        a = sig(np.asarray(p[odds]).ravel() * LN2)
+        b = np.asarray(p[psi]).ravel()
+        assert a.shape == b.shape, f"{psi} must be a scalar like {odds}"
+        assert a == pytest.approx(b, rel=1e-9)
+    assert np.asarray(p["span_PSI"]).ravel() == pytest.approx(
+        np.asarray(p["plateau_PSI"]).ravel() - np.asarray(p["baseline_PSI"]).ravel(), rel=1e-9)
+
+
+@pytest.mark.parametrize("model_key,native,converted", [
+    ("splicing_psi", "PSI", "log2odds"),
+    ("splicing_log2odds", "log2odds", "PSI"),
+])
+def test_both_location_readouts_hit_their_midpoints(splicing_batch, model_key, native, converted):
+    """logEC50 is the PSI-halfway dose; logEC50_log2odds the log2-odds-halfway dose. Each
+    model is exact on its native parameter, and must be close on the converted one."""
+    idata, _ = _fit(model_key, splicing_batch)
+    p = idata.posterior
+    sig = lambda z: 1 / (1 + np.exp(-z))
+    l2o = lambda q: np.log(q / (1 - q)) / LN2
+    base = float(p["baseline_log2odds"].mean()); span = float(p["span_log2odds"].mean())
+    rate = float(p["rate"].mean())
+    b, pl = sig(base * LN2), sig((base + span) * LN2)
+    for arm in map(str, p.coords["treatment"].values):
+        e50 = float(p["logEC50"].sel(treatment=arm).mean())
+        eodd = float(p["logEC50_log2odds"].sel(treatment=arm).mean())
+        if model_key == "splicing_psi":
+            psi_of = lambda x: b + (pl - b) * sig(rate * (x - e50))
+        else:
+            psi_of = lambda x: sig((base + span * sig(rate * (x - eodd))) * LN2)
+        assert psi_of(e50) == pytest.approx((b + pl) / 2, abs=5e-3)
+        assert l2o(psi_of(eodd)) == pytest.approx(base + span / 2, abs=5e-2)
 
 
 def test_logEC50_is_the_psi_halfway_dose(splicing_batch):

@@ -137,38 +137,38 @@ def fit_splicing_psi(data, samples=1000, args=None):
                         beta=(1 - psi_untreated) * phi, n=n_untreated_data,
                         observed=y_untreated_data, dims="obs_untreated")
 
-        base_arm = pm.Deterministic("baseline_PSI",
-                                    pm.math.sigmoid((baseline + offset_by_arm) * LN2),
-                                    dims="treatment")
-        plat_arm = pm.Deterministic("plateau_PSI",
-                                    pm.math.sigmoid((plateau + offset_by_arm) * LN2),
-                                    dims="treatment")
-        span_psi = pm.Deterministic("span_PSI", plat_arm - base_arm, dims="treatment")
+        base_ref = pm.Deterministic("baseline_PSI", psi_base_ref)
+        plat_ref = pm.Deterministic("plateau_PSI", psi_plat_ref)
+        pm.Deterministic("span_PSI", span_psi_ref)
+
+        # Per-arm readouts use that arm's own offset, so numerator and denominator of
+        # frac_realized are on the same footing even though the named asymptotes above sit
+        # at the reference level.
+        base_arm = pm.math.sigmoid((baseline + offset_by_arm) * LN2)
+        plat_arm = pm.math.sigmoid((plateau + offset_by_arm) * LN2)
+        span_arm = plat_arm - base_arm
 
         sig_top = 1 / (1 + pm.math.exp(-rate * (x_top - logEC50)))
-        dpsi_top = pm.Deterministic("dPSI_at_maxdose", span_psi * sig_top, dims="treatment")
-        pm.Deterministic("frac_realized", dpsi_top / span_psi, dims="treatment")
+        dpsi_top = pm.Deterministic("dPSI_at_maxdose", span_arm * sig_top, dims="treatment")
+        pm.Deterministic("frac_realized", dpsi_top / span_arm, dims="treatment")
 
-        # Location readouts. logEC50 is already the PSI-halfway dose; the log2-odds-halfway
-        # point is a different dose.
-        eta_mid = (pm.math.log(((base_arm + plat_arm) / 2)
-                               / (1 - (base_arm + plat_arm) / 2)) / LN2)
-        floor_arm2 = baseline + offset_by_arm
-        frac = pm.math.clip((eta_mid - floor_arm2) / (plateau - baseline), 1e-9, 1 - 1e-9)
+        # logEC50 is the PSI-halfway dose. The log2-odds-halfway dose is where the log2-odds
+        # reaches floor + span/2; the logistic acts in PSI space, so invert through the PSI
+        # curve rather than reusing model 4's conversion.
+        psi_at_odds_mid = pm.math.sigmoid((baseline + offset_by_arm + span / 2) * LN2)
+        frac = pm.math.clip((psi_at_odds_mid - base_arm) / span_arm, 1e-9, 1 - 1e-9)
         pm.Deterministic("logEC50_log2odds",
-                         logEC50 - pm.math.log(frac / (1 - frac)) / rate, dims="treatment")
+                         logEC50 + pm.math.log(frac / (1 - frac)) / rate, dims="treatment")
         pm.Deterministic(
             "logEC_dPSI05",
-            logEC50 - (1 / rate) * pm.math.log(pm.math.abs(span_psi) / 0.05 - 1),
+            logEC50 - (1 / rate) * pm.math.log(pm.math.abs(span_arm) / 0.05 - 1),
             dims="treatment")
-        f2 = pm.math.switch(span_psi > 0, 2.0, 0.5)
+        f2 = pm.math.switch(span_arm > 0, 2.0, 0.5)
         odds_target = f2 * base_arm / (1 - base_arm)
         psi_target = odds_target / (1 + odds_target)
-        r2 = pm.math.clip((psi_target - base_arm) / span_psi, 1e-9, 1 - 1e-9)
+        r2 = pm.math.clip((psi_target - base_arm) / span_arm, 1e-9, 1 - 1e-9)
         pm.Deterministic("logEC2x_odds",
                          logEC50 + pm.math.log(r2 / (1 - r2)) / rate, dims="treatment")
-        pm.Deterministic("hill_check", rate * span_psi_ref / (4 * m * (1 - m) * LN10))
 
-        idata = pm.sample(samples, tune=1000, chains=4, cores=1, random_seed=42,
-                          target_accept=0.9, return_inferencedata=True)
+        idata = pm.sample(samples, tune=1000, target_accept=0.95, random_seed=42, cores=1)
     return idata, model

@@ -39,10 +39,10 @@ def _covariate_offsets(args, cov_spec, X_treated, X_untreated):
     for c in cov_spec.columns:
         if c in cov_priors:
             family, params_ = cov_priors[c]
-            beta_list.append(get_prior_dist(family, params_, f"beta_{c}"))
+            beta_list.append(get_prior_dist(family, params_, f"beta_log2_{c}"))
         else:
-            beta_list.append(pm.Normal(f"beta_{c}", mu=0.0, sigma=DEFAULT_COVARIATE_PRIOR_SD))
-    beta = pm.Deterministic("beta", pm.math.stack(beta_list), dims="covariate")
+            beta_list.append(pm.Normal(f"beta_log2_{c}", mu=0.0, sigma=DEFAULT_COVARIATE_PRIOR_SD))
+    beta = pm.Deterministic("beta_log2", pm.math.stack(beta_list), dims="covariate")
 
     Xt = pm.Data("X_treated", X_treated, dims=("obs_treated", "covariate"))
     Xu = pm.Data("X_untreated", X_untreated, dims=("obs_untreated", "covariate"))
