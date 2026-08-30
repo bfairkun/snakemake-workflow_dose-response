@@ -44,10 +44,24 @@ MODELS
   Each fits a log-logistic curve in log10(dose), independently per feature, indexed by
   treatment arm so several arms of a series are fit jointly.
 
-    1  expression_logfc      log2 fold-change; untreated level pinned at 0
-    2  splicing_psi          beta-binomial on junction counts; logistic in PSI space
-    3  expression_absolute   absolute log2 abundance; free baseline
-    4  splicing_log2odds     beta-binomial; logistic in log2-odds (doublings of odds)
+  Expression:
+    expression_logfc      log2 fold-change; untreated level pinned at 0
+    expression_absolute   absolute log2 abundance; free baseline
+
+  Splicing -- a 2x2 over the response scale and what the covariate shifts. All four emit the
+  same column set, and the `model` column of the output records which one ran.
+
+    splicing_psi_vertical             logistic on PSI;       covariate shifts floor + ceiling
+    splicing_psi_sharedceiling        logistic on PSI;       covariate shifts the floor only
+    splicing_log2odds_vertical        logistic on log2-odds; covariate shifts floor + ceiling
+    splicing_log2odds_sharedceiling   logistic on log2-odds; covariate shifts the floor only
+
+  splicing_psi and splicing_log2odds are aliases for the first and last. Integer aliases
+  1-6 also resolve.
+
+  logEC50 is the native location: the log2-odds midpoint in the log2-odds models, the PSI
+  midpoint in the PSI models. logEC50_PSI is always the PSI-halfway dose and is the column to
+  use when comparing across models.
 
   Full specification with equations and priors: docs/models.qmd in this repo.
 
@@ -132,7 +146,7 @@ def parse_args(args=None):
         help="Model name, or its integer alias: "
              + ", ".join(f"{n} ({k})" for k, n in sorted(MODEL_NAMES.items(),
                                                          key=lambda kv: kv[1])))
-    parser.add_argument('--input', required=True, help="Batch input file with data. Required columns: featureID, dose, treatment, columns for outcome variables (e.g., y for model 1; y and n for model 2). If dose is 0, the sample is considered untreated.")
+    parser.add_argument('--input', required=True, help="Batch input file with data. Required columns: featureID, dose, treatment, columns for outcome variables (y for the expression models; y and n for the splicing models). If dose is 0, the sample is considered untreated.")
     parser.add_argument('--output_pkl', required=True, help="Output pickle file")
     parser.add_argument('--output_tsv', required=True, help="Output summary tsv file")
     parser.add_argument('--featureIDsToProcess', nargs='+', default=None, help="Optional: Only process these featureIDs (space-separated list or use multiple times).")
@@ -142,9 +156,9 @@ def parse_args(args=None):
         '--PosteriorFilter', nargs=4, action='append',
         metavar=('param', 'fraction', 'low', 'high'),
         help=(
-            "Posterior filter criteria, e.g. --PosteriorFilter slope 0.95 1 2. "
+            "Posterior filter criteria, e.g. --PosteriorFilter dPSI_at_maxdose 0.95 0.1 1. "
             "Can be specified multiple times for the same parameter for multi-interval (two-sided) filtering, "
-            "e.g. --PosteriorFilter lower 0.95 -10 -1 --PosteriorFilter lower 0.95 1 10"
+            "e.g. --PosteriorFilter span_log2 0.95 -100 -1 --PosteriorFilter span_log2 0.95 1 100"
         )
     )
     parser.add_argument(
@@ -161,7 +175,7 @@ def parse_args(args=None):
         help=(
             "Set prior for a parameter for a specific treatment: "
             "--prior logEC50 Branaplam Normal 2.5 1.0 "
-            "--prior slope Risdiplam Gamma 4.0 1.5\n"
+            "--prior logEC50 Risdiplam Normal 2.0 0.5\n"
             "To set a prior for all treatments, use --prior_default."
         )
     )
@@ -182,9 +196,9 @@ def parse_args(args=None):
         help=(
             "Optional TSV of sample x covariate values (one row per sample, a 'sample' column "
             "plus one column per covariate). Covariates enter as a VERTICAL offset only "
-            "(added to log2 abundance for model 3, to logit(PSI) for model 2), applied to the "
+            "(added to log2 abundance in the expression models, to log2-odds in the splicing models), applied to the "
             "dose-0 observations as well as the treated ones -- the control contrast is what "
-            "identifies the coefficients. Not supported for model 1, which has no free intercept."
+            "identifies the coefficients. Not supported for expression_logfc, which pins the untreated level at 0 and so has no free baseline."
         )
     )
     parser.add_argument(
@@ -195,8 +209,7 @@ def parse_args(args=None):
         '--covariate_prior', nargs='+', action='append', metavar='COVARIATE_PRIOR_SPEC',
         help=(
             "Set the prior for one covariate's coefficient, e.g. "
-            "--covariate_prior IFNa Normal 0 2.0. Default: Normal(0, 3), matching the default "
-            "prior on Delta, since both are effects in log2 units. "
+            "--covariate_prior IFNa Normal 0 2.0. Default Normal(0, 4) in the splicing models, Normal(0, 3) in expression_absolute. "
             "Prior scales are per covariate rather than shared."
         )
     )
@@ -204,7 +217,7 @@ def parse_args(args=None):
         '--scale_covariates', action='store_true',
         help=(
             "Z-scale CONTINUOUS covariate columns (>2 distinct values). Off by default so that "
-            "beta stays directly interpretable as the effect in log2 (or logit-PSI) units. "
+            "beta stays directly interpretable: log2 units in the expression models, doublings of the inclusion/exclusion odds in the splicing models. "
             "Binary 0/1 indicators are never scaled even when this is set: dividing by "
             "sqrt(p(1-p)) would make the coefficient depend on design balance, which differs "
             "between series, so betas would stop being comparable across series."

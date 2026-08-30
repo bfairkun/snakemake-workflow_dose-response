@@ -44,7 +44,7 @@ Two conventions hold everywhere:
 
 # The models
 
-## 1 — `expression_logfc`
+## `expression_logfc`
 
 Outcome is log2 fold-change, so the untreated level is pinned at zero and `span` is also the
 plateau.
@@ -52,57 +52,85 @@ plateau.
 $$y_s \sim \mathcal N\!\left(\text{span}\cdot\sigma\big(\text{rate}_{t(s)}(x_s-\text{logEC50}_{t(s)})\big),\ \sigma_{\text{obs}}\right),
 \qquad y_{\text{ctl}} \sim \mathcal N(0,\ \sigma_{\text{obs}})$$
 
-## 2 — `splicing_psi`
+## `expression_absolute`
 
-Beta-binomial on junction counts, logistic applied in **PSI** space.
+As above but on absolute log2 abundance, so the baseline is free and its uncertainty is
+propagated rather than subtracted away. The covariate is vertical: it shifts the whole curve.
 
-$$\psi_s = \text{baseline}_{\text{PSI}} + \text{span}_{\text{PSI}}\cdot\sigma\big(\text{rate}\,(x_s-\text{logEC50}_{t(s)})\big)$$
+$$y_s \sim \mathcal N\!\left(\text{baseline}_{\log 2} + \mathbf z_s^{\!\top}\boldsymbol\beta
++ \text{span}_{\log 2}\cdot\sigma\big(k_{t(s)}(x_s-e_{t(s)})\big),\ \sigma_{\text{obs}}\right)$$
 
-$$y_s \sim \text{BetaBinom}\!\left(n_s,\ \psi_s\phi,\ (1-\psi_s)\phi\right)$$
+$$y_{\text{ctl}} \sim \mathcal N\!\left(\text{baseline}_{\log 2}
++ \mathbf z_s^{\!\top}\boldsymbol\beta,\ \sigma_{\text{obs}}\right)$$
 
-`rate` is shared across arms; only `logEC50` varies.
+The same $\boldsymbol\beta$ on both terms is what identifies it: the dose-0 contrast never
+touches the dose-response curve. `expression_logfc` cannot take a covariate at all, since it
+pins the untreated level at 0 and so has no baseline for a reference level to shift from.
 
-## 3 — `expression_absolute`
+## `splicing_psi_*` and `splicing_log2odds_*` — a 2×2
 
-As model 1 but on absolute log2 abundance, so the baseline is free and its uncertainty propagates
-instead of being subtracted away.
+Beta-binomial on junction counts, with two independent choices. Both are single switches on one
+implementation, so all four combinations exist and share a column set.
 
-$$y_s \sim \mathcal N\!\left(\text{baseline}_{\log 2} + \text{span}_{\log 2}\cdot\sigma\big(\text{rate}_{t(s)}(x_s-\text{logEC50}_{t(s)})\big),\ \sigma_{\text{obs}}\right)$$
+**Response scale** — where the sigmoid acts:
 
-## 4 — `splicing_log2odds`
+$$\text{PSI space:}\quad \psi_s = \psi(A_s) + \bigl(\psi(U_s)-\psi(A_s)\bigr)\,\sigma\!\bigl(k(x_s-e_{t})\bigr)$$
 
-Same beta-binomial likelihood as model 2, but the logistic acts on **log2-odds**, which is the
-scale on which drug occupancy multiplies the inclusion/exclusion odds.
-
-$$\eta_s = A_s + (U-A_s)\,\sigma\big(\text{rate}\,(x_s-\text{logEC50}^{\text{odds}}_{t(s)})\big),
+$$\text{log2-odds space:}\quad \eta_s = A_s + (U_s-A_s)\,\sigma\!\bigl(k(x_s-e_{t})\bigr),
 \qquad \psi_s=\sigma(\eta_s\ln 2)$$
 
-$$A_s = \text{baseline}_{\log_2\text{odds}} + \mathbf z_s^{\!\top}\boldsymbol\beta,
-\qquad U = \text{baseline}_{\log_2\text{odds}} + \text{span}_{\log_2\text{odds}}$$
+**Covariate target** — what $\boldsymbol\beta$ moves:
 
-Three commitments distinguish it:
+$$\text{vertical:}\quad A_s=a+\mathbf z_s^{\!\top}\boldsymbol\beta,\quad U_s=a+\Delta+\mathbf z_s^{\!\top}\boldsymbol\beta$$
 
-**The vertical scale is doublings of odds.** One unit is one doubling, which is the `EC2x` notion and
-the quantity Ishigami's efficacy parameter is defined by; $E_{\max}=2^{\text{span}}$. Choosing the
-vertical scale is free — it leaves `rate` and `logEC50` untouched, because the response scaling
-factors out of the sigmoid.
+$$\text{sharedceiling:}\quad A_s=a+\mathbf z_s^{\!\top}\boldsymbol\beta,\quad U_s=a+\Delta$$
 
-**The covariate enters the floor only.** $U$ contains no $\boldsymbol\beta$, so the maximum attainable
-PSI is one number for every sample and arm: the claim that the ceiling is set by local
-competing-splice-site context, not by the drug or the secondary treatment. The same
-$\boldsymbol\beta$ applies to the dose-0 rows, and that shared coefficient across both likelihood
-terms is what identifies it.
+| model | scale | β shifts |
+|---|---|---|
+| `splicing_psi_vertical` | PSI | floor and ceiling |
+| `splicing_psi_sharedceiling` | PSI | floor only |
+| `splicing_log2odds_vertical` | log2-odds | floor and ceiling |
+| `splicing_log2odds_sharedceiling` | log2-odds | floor only |
 
-**The slope is parameterized through `hill`.** `rate` means something different at every locus, so a
-prior on it would imply a different cooperativity per junction — a 12-fold spread across the marker
-set. `hill` is comparable to the literature instead:
+`splicing_psi` and `splicing_log2odds` are aliases for the first and last.
 
-$$\text{model 4:}\quad \text{hill}=\frac{\text{rate}\cdot|\text{span}_{\log_2\text{odds}}|}{4\log_2 10}
+**What distinguishes the covariate targets.** Under `vertical` every arm has the *same*
+log2-odds span, because both endpoints move together; only the PSI span varies, from sigmoid
+nonlinearity alone. Under `sharedceiling` the floor moves while the ceiling does not, so an
+arm's span differs from the reference on *both* scales. `span_by_arm_log2odds` shows this
+directly, and `span_sign_min` goes negative if some arm's floor has crossed the ceiling.
+
+`vertical` says a secondary treatment changes the maximum attainable PSI; `sharedceiling` says
+the ceiling belongs to the locus — local competing-splice-site context — and a raised baseline
+merely starts closer to it. Neither is testable where nothing saturates.
+
+**Two location readouts.** `logEC50` is the native one: it centres the sigmoid on whichever
+scale the model acts on, so it is the log2-odds midpoint in the log2-odds models and the PSI
+midpoint in the PSI models. `logEC50_PSI` is always the dose at which PSI sits halfway between
+floor and ceiling, and is the column to compare across models; in the PSI models the two
+coincide. Because the native locations differ by roughly 0.2 decades, the `logEC50` prior
+centres a slightly different quantity in each family — immaterial at $\sigma=3$, but a reason
+to join on `logEC50_PSI`.
+
+**Named asymptotes are reference level** (covariate $=0$), so
+$\sigma(\texttt{plateau\_log2odds}\cdot\ln 2)=\texttt{plateau\_PSI}$ always holds. Per-arm
+readouts use each arm's own offset internally, which matters for `frac_realized`: dividing an
+arm-specific numerator by the reference `span_PSI` would be wrong.
+
+## `hill`, and why the slope is parameterized through it
+
+$k$ means something different at every locus, so a prior on it implies a different
+cooperativity per junction — a 12-fold spread across the marker set. `hill` is comparable to
+the literature instead:
+
+$$\text{log2-odds space:}\quad \text{hill}=\frac{k\,|\Delta|}{4\log_2 10}
 \qquad
-\text{model 2:}\quad \text{hill}=\frac{\text{rate}\cdot\text{span}_{\text{PSI}}}{4\,m(1-m)\ln 10}$$
+\text{PSI space:}\quad \text{hill}=\frac{k\,\Delta_{\text{PSI}}}{4\,m(1-m)\ln 10}$$
 
-with $m=(\text{baseline}_{\text{PSI}}+\text{plateau}_{\text{PSI}})/2$. Both replace $|\text{span}|$
-with $\sqrt{\text{span}^2+0.25^2}$ so `rate` stays finite as the span vanishes.
+with $m=(\psi(a)+\psi(a+\Delta))/2$ and both evaluated at the reference level. Each replaces
+the span with $\sqrt{\text{span}^2+\epsilon^2}$ so $k$ stays finite as the span vanishes:
+$\epsilon=0.25$ doublings in log2-odds space, $\epsilon=0.01$ in PSI space, since the two spans
+are in different units.
 
 # Priors
 
@@ -113,7 +141,7 @@ Identical in models 2 and 4 wherever a parameter means the same thing.
 | `baseline_log2odds` | $\mathcal N(\text{log2-odds of pooled control PSI},\ 3)$ | data-anchored |
 | `span_log2odds` | $t_{\nu=3}(0,\ 6)$ | heavy-tailed on purpose |
 | `hill` | $\text{LogNormal}(\log 1.5,\ 0.35)$ | 95% on $[0.76,\,2.98]$ |
-| `logEC50` | $\mathcal N(\text{arm's assayed dose midpoint},\ 3)$ | wide on purpose |
+| `logEC50` | $\mathcal N(\text{arm's assayed dose midpoint},\ 3)$ | wide on purpose; $1.5$ in the expression models |
 | `phi` | $\text{Gamma}(2,\ 0.2)$ | |
 | `beta_log2odds` | $\mathcal N(0,\ 4)$ | signed |
 
@@ -172,6 +200,6 @@ In a notebook, no install needed:
 ```python
 import sys
 sys.path.insert(0, ".../module_workflows/dose_response/src")
-from dose_response.models.splicing_log2odds import fit_model4b
+from dose_response.models.splicing import fit_splicing
 from dose_response import plotting as drplot
 ```
