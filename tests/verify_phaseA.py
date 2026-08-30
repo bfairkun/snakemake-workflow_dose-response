@@ -3,6 +3,11 @@
 Baseline = scratch/model2_marker_fits/*.nc, the 18 model-2 fits produced earlier today by
 the monolithic scripts/BayesianDoseResponse_ByBatch.py (with covariates). Refit the same
 features through the package and require every posterior array to match exactly.
+
+NOTE: the baselines this compares against predate Phase B, which deliberately changed the
+splicing parameterizations. Differences are now expected; the script is kept because it is
+the only harness that reads those artefacts, and because it still catches an accidental
+change to the expression models.
 """
 import functools, os, shlex, sys, warnings, logging
 import numpy as np, pandas as pd, pymc as pm, arviz as az
@@ -12,7 +17,7 @@ sys.path.insert(0, "module_workflows/dose_response/src")
 
 from dose_response.covariates import prepare_covariates
 from dose_response.filters import check_prefilter_by_number
-from dose_response.models.splicing_psi import fit_splicing_model
+from dose_response.fitting import MODEL_CONFIG
 from dose_response.cli.fit_batch import parse_args
 import dose_response.models.splicing_psi as sp
 _o = pm.sample
@@ -37,7 +42,7 @@ for s in ["GSE304951_merged","Exp2","C2C5_24h","Exp11_CP3"]:
         assert check_prefilter_by_number(sub, PF)[0]
         a = parse_args(shlex.split("--model 2 --input x --output_pkl x --output_tsv x"))
         a.cov_spec = spec
-        new = fit_splicing_model(sub, samples=1000, args=a)[0]
+        new = MODEL_CONFIG[2]["fit_func"](sub, samples=1000, args=a)[0]
         old = az.from_netcdf(nc)
         diffs = []
         for v in old.posterior.data_vars:

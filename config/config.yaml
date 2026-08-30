@@ -38,7 +38,7 @@ approaches:
     feature_by_sample_table: "rna-seq/ExpressionMatrices/GRCh38_GencodeRelease44Comprehensive/log2Filtered_TMM_CPM.sorted.bed.gz"
     tidy_transform: "expression_log2fc"
     model_params: >-
-      --model 1
+      --model expression_logfc
       --PreFilterByNumberReasonableObservedOutcomes y 2 -100 -1
       --PreFilterByNumberReasonableObservedOutcomes y 2 1 100
 
@@ -46,8 +46,8 @@ approaches:
     feature_by_sample_table: "rna-seq/SplicingAnalysis/leafcutter/GRCh38_GencodeRelease44Comprehensive/juncTableBeds/JuncCounts.sorted.bed.gz"
     tidy_transform: "junction_counts"
     model_params: >-
-      --model 2
+      --model splicing_psi_vertical
       --PreFilterByNumberReasonableObservedOutcomes n 5 10 100000
       --PreFilterByNumberReasonableObservedOutcomes y 3 3 100000
-      --PosteriorFilter MaxDeltaPSI 0.95 -1 -0.1
-      --PosteriorFilter MaxDeltaPSI 0.95 0.1 1
+      --PosteriorFilter dPSI_at_maxdose 0.95 -1 -0.1
+      --PosteriorFilter dPSI_at_maxdose 0.95 0.1 1

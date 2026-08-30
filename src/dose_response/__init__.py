@@ -7,7 +7,7 @@ import importlib
 
 __version__ = "0.1.0"
 
-_SUBMODULES = ("covariates", "filters", "priors", "fitting", "io", "summarize",
+_SUBMODULES = ("covariates", "filters", "priors", "fitting", "summarize",
                "plotting", "models", "cli")
 
 

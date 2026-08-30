@@ -24,9 +24,6 @@ plotting = ["matplotlib"]
 
 [project.scripts]
 dose-response-fit = "dose_response.cli.fit_batch:main"
-dose-response-gather = "dose_response.cli.gather:main"
-dose-response-specificity = "dose_response.cli.specificity_test:main"
-dose-response-sqlite = "dose_response.cli.write_sqlite:main"
 
 [tool.setuptools]
 packages = ["dose_response", "dose_response.models", "dose_response.cli"]

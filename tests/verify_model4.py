@@ -4,6 +4,11 @@ Baseline = scratch/model4b_marker_fits/*.nc, produced by the prototype with exac
 current parameterization (prior on EC_dPSI50Max, sigma=1). The move stripped the script's
 chdir / sys.path / pm.sample monkeypatch, none of which touch the RNG, so posteriors must
 match bit-for-bit.
+
+NOTE: the baselines this compares against predate Phase B, which deliberately changed the
+splicing parameterizations. Differences are now expected; the script is kept because it is
+the only harness that reads those artefacts, and because it still catches an accidental
+change to the expression models.
 """
 import functools, os, sys, warnings, logging
 import numpy as np, pandas as pd, pymc as pm, arviz as az
@@ -12,13 +17,19 @@ os.chdir("/project/yangili1/bjf79/20260310_diversesm_dr/code")
 sys.path.insert(0, "module_workflows/dose_response/src")
 from dose_response.covariates import prepare_covariates
 from dose_response.filters import check_prefilter_by_number
-from dose_response.models.splicing_log2odds import fit_model4b
-import dose_response.models.splicing_log2odds as m4
+from dose_response.fitting import MODEL_CONFIG
+import dose_response.models.splicing as m4
 _o = pm.sample
 @functools.wraps(_o)
 def _q(*a, **k):
     k.setdefault("progressbar", False); return _o(*a, **k)
 pm.sample = m4.pm.sample = _q
+
+class _A:
+    """Minimal stand-in for the argparse namespace the fit functions read."""
+    def __init__(self, spec):
+        self.cov_spec, self.prior, self.prior_default = spec, None, None
+
 
 BASE = "scratch/model4b_marker_fits"
 J = pd.read_csv("scratch/model2_marker_fits/marker_junction_rows.tsv.gz", sep="\t")
@@ -34,7 +45,7 @@ for s in ["GSE304951_merged","Exp2","C2C5_24h","Exp11_CP3"]:
         if not os.path.exists(nc): continue
         sub = sub_s[sub_s.gene == g]
         assert check_prefilter_by_number(sub, PF)[0]
-        new = fit_model4b(sub, samples=1000, cov_spec=spec)[0]
+        new = MODEL_CONFIG[4]["fit_func"](sub, samples=1000, args=_A(spec))[0]
         old = az.from_netcdf(nc)
         diffs = []
         for v in old.posterior.data_vars:

@@ -302,7 +302,7 @@ def main(args=None):
                 rho = np.nan
             spearman_dict[t] = rho
 
-        row = {"feature": feature}
+        row = {"feature": feature, "model": MODEL_CONFIG[args.model]["name"]}
         if args.cov_spec is not None:
             # Record the design so a fit is self-describing when read back months later.
             row["covariates_used"] = args.cov_spec.describe()

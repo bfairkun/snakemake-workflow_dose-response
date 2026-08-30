@@ -8,6 +8,11 @@ the split:
 Divergence counts are a sharp fingerprint: they depend on the posterior geometry and the RNG
 stream, so 20/20 agreement is hard to get by accident. The figures then compare the actual
 posterior curves and intervals pixel by pixel.
+
+NOTE: the baselines this compares against predate Phase B, which deliberately changed the
+splicing parameterizations. Differences are now expected; the script is kept because it is
+the only harness that reads those artefacts, and because it still catches an accidental
+change to the expression models.
 """
 import functools, os, shlex, sys, warnings, logging
 import numpy as np, pandas as pd, pymc as pm
@@ -16,7 +21,7 @@ os.chdir("/project/yangili1/bjf79/20260310_diversesm_dr/code")
 sys.path.insert(0, "module_workflows/dose_response/src")
 import dose_response.covariates as CD
 from dose_response.cli.fit_batch import parse_args
-from dose_response.models.expression_absolute import fit_expression_absolute_model
+from dose_response.models.expression_absolute import fit_expression_absolute
 import dose_response.models.expression_absolute as ea
 _o = pm.sample
 @functools.wraps(_o)
@@ -74,7 +79,7 @@ for s in SERIES:
         a = parse_args(shlex.split("--model 3 --input x --output_pkl x --output_tsv x"))
         a.cov_spec = SPECS[s]
         sub = DATA[s][DATA[s].featureID == ids[g]]
-        FITS[(s,g)] = fit_expression_absolute_model(sub, samples=1000, args=a)[0]
+        FITS[(s,g)] = fit_expression_absolute(sub, samples=1000, args=a)[0]
         got[f"{s}/{g}"] = int(FITS[(s,g)].sample_stats.diverging.sum())
         print(f"  {s}/{g}: div={got[f'{s}/{g}']} (baseline {BASELINE_DIV[f'{s}/{g}']})", flush=True)
 

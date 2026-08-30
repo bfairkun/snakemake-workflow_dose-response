@@ -130,6 +130,7 @@ def fit_expression_absolute(data, samples=1000, args=None):
         logEC50_t = logEC50[treatment_idx]
         y_treated_mu = offset_treated + span_log2 / (1 + pm.math.exp(-slope_t * (log10_dose - logEC50_t)))
 
+        pm.Deterministic('mu_treated', y_treated_mu, dims="obs_treated")
         pm.Normal('y_treated_mu', mu=y_treated_mu, sigma=sigma, observed=y_treated_data, dims="obs_treated")
         pm.Normal('y_untreated_mu', mu=offset_untreated, sigma=sigma, observed=y_untreated_data, dims="obs_untreated")
 

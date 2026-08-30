@@ -7,6 +7,8 @@ quietly half-implemented either.
 
 Companion to docs/models.qmd.
 """
+import pathlib
+
 import numpy as np
 import pytest
 
@@ -53,11 +55,11 @@ def test_maxdeltapsi_is_retired(splicing_batch):
 @pytest.mark.parametrize("model_key,expected", [
     ("splicing_psi", {"baseline_PSI", "plateau_PSI", "span_PSI", "span_log2odds",
                       "baseline_log2odds", "plateau_log2odds", "rate", "hill", "logEC50",
-                      "logEC50_log2odds", "logEC_dPSI05", "logEC2x_odds", "phi",
+                      "logEC50_PSI", "logEC_dPSI05", "logEC2x_odds", "phi",
                       "dPSI_at_maxdose", "frac_realized", "psi_treated"}),
     ("splicing_log2odds", {"baseline_log2odds", "span_log2odds", "plateau_log2odds",
                            "baseline_PSI", "plateau_PSI", "span_PSI", "rate", "hill",
-                           "logEC50", "logEC50_log2odds", "span_by_arm_log2odds",
+                           "logEC50", "logEC50_PSI", "span_by_arm_log2odds",
                            "span_sign_min", "dPSI_at_maxdose", "frac_realized",
                            "psi_treated", "phi"}),
 ])
@@ -171,8 +173,7 @@ def test_dPSI_at_maxdose_and_frac_realized(splicing_batch, model_key):
         if model_key == "splicing_psi":
             psi_top = b + (pl - b) * sig(rate * (x_top - e50))
         else:
-            eodd = np.asarray(p["logEC50_log2odds"].sel(treatment=arm)).ravel()
-            psi_top = sig((base + span * sig(rate * (x_top - eodd))) * LN2)
+            psi_top = sig((base + span * sig(rate * (x_top - e50))) * LN2)
         want_d = psi_top - b
         got_d = np.asarray(p["dPSI_at_maxdose"].sel(treatment=arm)).ravel()
         assert got_d == pytest.approx(want_d, abs=1e-6), "wrong dose or wrong baseline"
@@ -196,13 +197,10 @@ def test_asymptotes_are_reference_level_and_consistent(splicing_batch, model_key
         np.asarray(p["plateau_PSI"]).ravel() - np.asarray(p["baseline_PSI"]).ravel(), rel=1e-9)
 
 
-@pytest.mark.parametrize("model_key,native,converted", [
-    ("splicing_psi", "PSI", "log2odds"),
-    ("splicing_log2odds", "log2odds", "PSI"),
-])
-def test_both_location_readouts_hit_their_midpoints(splicing_batch, model_key, native, converted):
-    """logEC50 is the PSI-halfway dose; logEC50_log2odds the log2-odds-halfway dose. Each
-    model is exact on its native parameter, and must be close on the converted one."""
+@pytest.mark.parametrize("model_key", ["splicing_psi", "splicing_log2odds"])
+def test_logEC50_is_native_and_logEC50_PSI_is_the_common_currency(splicing_batch, model_key):
+    """logEC50 centres the sigmoid on this model's own scale. logEC50_PSI is always the
+    PSI-halfway dose, so it is the column that can be compared across models."""
     idata, _ = _fit(model_key, splicing_batch)
     p = idata.posterior
     sig = lambda z: 1 / (1 + np.exp(-z))
@@ -212,21 +210,18 @@ def test_both_location_readouts_hit_their_midpoints(splicing_batch, model_key, n
     b, pl = sig(base * LN2), sig((base + span) * LN2)
     for arm in map(str, p.coords["treatment"].values):
         e50 = float(p["logEC50"].sel(treatment=arm).mean())
-        eodd = float(p["logEC50_log2odds"].sel(treatment=arm).mean())
+        epsi = float(p["logEC50_PSI"].sel(treatment=arm).mean())
         if model_key == "splicing_psi":
             psi_of = lambda x: b + (pl - b) * sig(rate * (x - e50))
+            assert epsi == pytest.approx(e50, abs=1e-9), "PSI space: the two must coincide"
+            assert psi_of(e50) == pytest.approx((b + pl) / 2, abs=1e-9)
         else:
-            psi_of = lambda x: sig((base + span * sig(rate * (x - eodd))) * LN2)
-        assert psi_of(e50) == pytest.approx((b + pl) / 2, abs=5e-3)
-        assert l2o(psi_of(eodd)) == pytest.approx(base + span / 2, abs=5e-2)
-
-
-def test_logEC50_is_the_psi_halfway_dose(splicing_batch):
-    """Model 4's native midpoint is on log2-odds and is a DIFFERENT dose; it must not be
-    the one called logEC50."""
-    idata, _ = _fit("splicing_log2odds", splicing_batch)
-    p = idata.posterior
-    assert not np.allclose(np.asarray(p["logEC50"]), np.asarray(p["logEC50_log2odds"]))
+            psi_of = lambda x: sig((base + span * sig(rate * (x - e50))) * LN2)
+            assert l2o(psi_of(e50)) == pytest.approx(base + span / 2, abs=1e-9), \
+                "log2-odds space: logEC50 must be the log2-odds midpoint"
+            assert epsi != pytest.approx(e50), "the two locations are different doses"
+        assert psi_of(epsi) == pytest.approx((b + pl) / 2, abs=5e-3), \
+            "logEC50_PSI must hit the PSI midpoint in every model"
 
 
 def test_span_and_beta_are_signed(splicing_batch):

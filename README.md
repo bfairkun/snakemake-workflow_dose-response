@@ -67,11 +67,11 @@ dose_response:
     ExpressionLogFC:
       feature_by_sample_table: "rna-seq/ExpressionMatrices/.../log2Filtered_TMM_CPM.sorted.bed.gz"
       tidy_transform: "expression_log2fc"
-      model_params: "--model 1 --PreFilterByNumberReasonableObservedOutcomes y 2 -100 -1 --PreFilterByNumberReasonableObservedOutcomes y 2 1 100"
+      model_params: "--model expression_logfc --PreFilterByNumberReasonableObservedOutcomes y 2 -100 -1 --PreFilterByNumberReasonableObservedOutcomes y 2 1 100"
     SplicingPSI:
       feature_by_sample_table: "rna-seq/SplicingAnalysis/leafcutter/.../JuncCounts.sorted.bed.gz"
       tidy_transform: "junction_counts"
-      model_params: "--model 2 --PreFilterByNumberReasonableObservedOutcomes n 5 10 100000 --PreFilterByNumberReasonableObservedOutcomes y 3 3 100000 --PosteriorFilter MaxDeltaPSI 0.95 -1 -0.1 --PosteriorFilter MaxDeltaPSI 0.95 0.1 1"
+      model_params: "--model splicing_psi_vertical --PreFilterByNumberReasonableObservedOutcomes n 5 10 100000 --PreFilterByNumberReasonableObservedOutcomes y 3 3 100000 --PosteriorFilter dPSI_at_maxdose 0.95 -1 -0.1 --PosteriorFilter dPSI_at_maxdose 0.95 0.1 1"
 ```
 
 ## `samples.tsv` schema
@@ -109,7 +109,7 @@ Additional columns are allowed and ignored.
      MyApproach:
        feature_by_sample_table: "path/to/my_table.bed.gz"
        tidy_transform: "myapproach"
-       model_params: "--model 1 ..."
+       model_params: "--model expression_logfc ..."
    ```
 
 ## Outputs

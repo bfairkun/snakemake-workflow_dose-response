@@ -37,9 +37,13 @@ def fit_splicing(data, samples=1000, args=None, scale="log2odds",
     covariate_target  "vertical" shifts floor and ceiling together; "sharedceiling" shifts
                       the floor only, leaving one ceiling for every sample and arm.
 
-    logEC50 is the sampled per-arm parameter in all four combinations and always means the
-    PSI-halfway dose, so its prior means the same thing everywhere. The named asymptotes are
-    reference-level (covariate = 0); per-arm readouts use each arm's own offset.
+    logEC50 is the sampled per-arm parameter and centres the sigmoid on whichever scale this
+    model acts on, so it is the native location. logEC50_PSI is always the dose at which PSI
+    sits halfway between floor and ceiling, and is the cross-model currency. In the PSI-space
+    models the two coincide.
+
+    Named asymptotes are reference-level (covariate = 0); per-arm readouts use each arm's own
+    offset.
     """
     if scale not in SCALES:
         raise ValueError(f"scale must be one of {SCALES}, got {scale!r}")
@@ -165,34 +169,29 @@ def fit_splicing(data, samples=1000, args=None, scale="log2odds",
                                     dims="treatment")
         pm.Deterministic("span_sign_min", pm.math.min(span_arm * pt.sign(span)))
 
-        # Shift between the two halfway definitions: unit Jacobian in logEC50, so no density
-        # correction whichever scale carries the sigmoid.
-        eta_psi_mid = to_log2odds((psi_floor_arm + psi_ceil_arm) / 2.0)
-        frac_odds = pm.math.clip((eta_psi_mid - floor_arm) / span_arm, 1e-9, 1 - 1e-9)
-        shift = pm.math.log(frac_odds / (1 - frac_odds)) / rate
+        floor_obs = baseline + offset_treated
+        ceil_obs = plateau + ceiling_shift
 
         if scale == "log2odds":
-            centre = pm.Deterministic("logEC50_log2odds", logEC50 - shift, dims="treatment")
-            floor_obs = baseline + offset_treated
-            ceil_obs = plateau + ceiling_shift
             eta = floor_obs + (ceil_obs - floor_obs) / (
-                1 + pm.math.exp(-rate * (log10_dose - centre[treatment_idx])))
+                1 + pm.math.exp(-rate * (log10_dose - logEC50[treatment_idx])))
             psi_treated = to_psi(eta)
             psi_top = to_psi(floor_arm + span_arm / (
-                1 + pm.math.exp(-rate * (x_top - centre))))
-        else:
-            psi_at_odds_mid = to_psi(floor_arm + span_arm / 2.0)
-            frac_psi = pm.math.clip((psi_at_odds_mid - psi_floor_arm) / span_arm_psi,
-                                    1e-9, 1 - 1e-9)
-            pm.Deterministic("logEC50_log2odds",
-                             logEC50 + pm.math.log(frac_psi / (1 - frac_psi)) / rate,
+                1 + pm.math.exp(-rate * (x_top - logEC50))))
+            # PSI-halfway dose: invert the log2-odds curve at the log2-odds of the PSI midpoint
+            eta_psi_mid = to_log2odds((psi_floor_arm + psi_ceil_arm) / 2.0)
+            frac = pm.math.clip((eta_psi_mid - floor_arm) / span_arm, 1e-9, 1 - 1e-9)
+            pm.Deterministic("logEC50_PSI",
+                             logEC50 + pm.math.log(frac / (1 - frac)) / rate,
                              dims="treatment")
-            base_obs = to_psi(baseline + offset_treated)
-            ceil_obs = to_psi(plateau + ceiling_shift)
-            psi_treated = base_obs + (ceil_obs - base_obs) / (
+        else:
+            base_obs, ceil_obs_psi = to_psi(floor_obs), to_psi(ceil_obs)
+            psi_treated = base_obs + (ceil_obs_psi - base_obs) / (
                 1 + pm.math.exp(-rate * (log10_dose - logEC50[treatment_idx])))
             psi_top = psi_floor_arm + span_arm_psi / (
                 1 + pm.math.exp(-rate * (x_top - logEC50)))
+            # the sigmoid is already centred on the PSI midpoint here
+            pm.Deterministic("logEC50_PSI", logEC50 * 1.0, dims="treatment")
 
         psi_untreated = to_psi(baseline + offset_untreated)
         pm.Deterministic("psi_treated", psi_treated, dims="obs_treated")
