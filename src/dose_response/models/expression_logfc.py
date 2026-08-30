@@ -96,6 +96,14 @@ def fit_expression_logfc(data, samples=1000, args=None):
 
         pm.Deterministic("baseline_log2", pm.math.constant(0.0))
         pm.Deterministic("plateau_log2", span_log2)
+
+        x_top_arm = np.array([
+            float(np.log10(treated_data.loc[treated_data["treatment"] == t, "dose"]
+                           .astype(float)).max()) for t in treatments])
+        dy_top = pm.Deterministic(
+            "dY_at_maxdose",
+            span_log2 / (1 + pm.math.exp(-rate * (x_top_arm - logEC50))), dims="treatment")
+        pm.Deterministic("frac_realized", dy_top / span_log2, dims="treatment")
         pm.Deterministic('logEC2x', logEC50 - (1 / rate) * pm.math.log(pm.math.abs(span_log2) - 1), dims="treatment")
 
         idata = pm.sample(samples, tune=1000, target_accept=0.95, random_seed=42, cores=1)

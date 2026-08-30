@@ -20,7 +20,8 @@ MODEL_CONFIG = {
         "fit_func": fit_expression_logfc,
         "spearman_func": _LOG2_OUTCOME,
         "summary_vars_scalar": ["baseline_log2", "span_log2", "plateau_log2", "sigma"],
-        "summary_vars_treatment": ["rate", "logEC50", "logEC2x"],
+        "summary_vars_treatment": ["rate", "logEC50", "logEC2x",
+                                   "dY_at_maxdose", "frac_realized"],
         "r2_func": r2_by_treatment_expression,
     },
     2: {
@@ -42,7 +43,8 @@ MODEL_CONFIG = {
         "fit_func": fit_expression_absolute,
         "spearman_func": _LOG2_OUTCOME,
         "summary_vars_scalar": ["baseline_log2", "span_log2", "plateau_log2", "sigma"],
-        "summary_vars_treatment": ["rate", "logEC50", "logEC2x"],
+        "summary_vars_treatment": ["rate", "logEC50", "logEC2x",
+                                   "dY_at_maxdose", "frac_realized"],
         "r2_func": r2_by_treatment_expression,
     },
     4: {
