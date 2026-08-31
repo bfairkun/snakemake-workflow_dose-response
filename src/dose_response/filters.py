@@ -4,7 +4,7 @@ from collections import defaultdict
 
 import numpy as np
 
-__all__ = ["check_prefilter_by_number", "check_posterior_filters"]
+__all__ = ["check_prefilter_by_number", "check_posterior_filters", "observed_abs_effect"]
 
 
 def check_prefilter_by_number(feature_data, prefilters):
@@ -63,3 +63,32 @@ def check_posterior_filters(idata, filters):
                 f"Did not fit; {param}: only {frac_in_range:.2f} in {intervals_str} (required {required_fraction})"
             )
     return True, "Pass"
+
+def observed_abs_effect(feature_data, treated, outcome_func):
+    """Largest observed |top-dose mean - control mean| over treated arms x dose-0 groups.
+
+    Maximising over control groups rather than pooling them keeps this a lower bound on what
+    a matched-baseline model would see: a pooled mean lies between the group means, so no
+    matched comparison can exceed every group-wise one. NaN when nothing is measurable, which
+    callers must treat as "keep".
+    """
+    def _mean(g):
+        v = np.asarray(outcome_func(g), dtype=float)
+        v = v[np.isfinite(v)]
+        return v.mean() if v.size else np.nan
+
+    controls = feature_data[feature_data["dose"] == 0]
+    baselines = [_mean(g) for _, g in controls.groupby("treatment")]
+    baselines = [b for b in baselines if np.isfinite(b)]
+    if not baselines:
+        return np.nan
+
+    effect = np.nan
+    for _, arm in treated.groupby("treatment"):
+        top = _mean(arm[arm["dose"] == arm["dose"].max()])
+        if not np.isfinite(top):
+            continue
+        for b in baselines:
+            e = abs(top - b)
+            effect = e if not np.isfinite(effect) else max(effect, e)
+    return effect

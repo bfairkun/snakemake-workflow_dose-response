@@ -18,7 +18,7 @@ from ..covariates import (
     parse_covariate_priors,
     prepare_covariates,
 )
-from ..filters import check_posterior_filters, check_prefilter_by_number
+from ..filters import check_posterior_filters, check_prefilter_by_number, observed_abs_effect
 from ..fitting import (
     COVARIATE_INDEXED_SUMMARY_VARS,
     COVARIATE_SUPPORTED_MODELS,
@@ -153,6 +153,7 @@ def parse_args(args=None):
     parser.add_argument('--samples', type=int, default=1000, help="Number of samples to draw from the posterior")
     parser.add_argument('--MaxFitErrors', type=int, default=0, help="Exit non-zero if more than this many features raise an exception during fitting. Such errors are usually environmental (most often the PyTensor compile cache being deleted mid-run) rather than properties of the data, and would otherwise be recorded silently in the per-feature 'status' column while the job still exits 0. Set to -1 to tolerate any number.")
     parser.add_argument('--AbsSpearmanPreFilter', type=float, default=0.4, help="Minimum |Spearman correlation| between dose and y to attempt fitting")
+    parser.add_argument('--MinObservedAbsEffect', type=float, default=None, help="Skip fitting a feature whose OBSERVED outcome barely moves: the largest |mean(outcome at an arm's top dose) - mean(outcome in a dose-0 group)|, maximised over treated arms and control groups, must reach this value. Units follow the model's outcome (PSI for the splicing models, log2 for the expression models). This is a necessary condition for a demonstrated-change posterior filter such as --PosteriorFilter dPSI_at_maxdose 0.95 0.1 1, since the fitted effect at the top dose is anchored on these same observations; it exists because such features are both discarded and disproportionately slow to sample (an unidentified posterior forces a tiny step size). A feature whose baseline or top dose is unmeasurable is always kept. Off by default.")
     parser.add_argument(
         '--PosteriorFilter', nargs=4, action='append',
         metavar=('param', 'fraction', 'low', 'high'),
@@ -352,6 +353,16 @@ def main(args=None):
             summary_records.append(row)
             logger.info(f"Feature {feature} filtered out: low correlation")
             continue
+
+        if args.MinObservedAbsEffect is not None:
+            effect = observed_abs_effect(feature_data, treated,
+                                         MODEL_CONFIG[args.model]["spearman_func"])
+            if np.isfinite(effect) and effect < args.MinObservedAbsEffect:
+                row["status"] = (f"Did not fit; observed |effect| at top dose {effect:.4f} "
+                                 f"< {args.MinObservedAbsEffect}")
+                summary_records.append(row)
+                logger.info(f"Feature {feature} filtered out: observed effect {effect:.4f}")
+                continue
 
         try:
             fit_func = MODEL_CONFIG[args.model]["fit_func"]
