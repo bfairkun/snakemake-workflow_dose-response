@@ -96,7 +96,7 @@ rule FitBayesianDoseResponse_ByBatch:
                                      if config["approaches"][wc.Approach].get("covariates") else "",
         pytensor_scratch = config.get("pytensor_scratch", "")
     resources:
-        mem_mb = GetMemForSuccessiveAttempts(58000)
+        mem_mb = GetMemForSuccessiveAttempts(16000, 48000, max_mb=64000)
     shell:
         """
         # $TMPDIR is Slurm's per-job dir; a shared /tmp is swept by the epilog when any
