@@ -94,12 +94,16 @@ rule FitBayesianDoseResponse_ByBatch:
         extra           = lambda wc: config["approaches"][wc.Approach]["model_params"],
         covariates      = lambda wc: f"--covariates {config['approaches'][wc.Approach]['covariates']}"
                                      if config["approaches"][wc.Approach].get("covariates") else "",
-        pytensor_scratch = config.get("pytensor_scratch", "/tmp/")
+        pytensor_scratch = config.get("pytensor_scratch", "")
     resources:
         mem_mb = GetMemForSuccessiveAttempts(58000)
     shell:
         """
-        export PYTENSOR_FLAGS="compiledir={params.pytensor_scratch}/${{SLURM_JOBID:-$$}}/pytensor_cache_${{RANDOM}},force_compile=True" && \
+        # $TMPDIR is Slurm's per-job dir; a shared /tmp is swept by the epilog when any
+        # sibling job of the same user ends on the node, deleting a live compile cache.
+        CacheBase="{params.pytensor_scratch}" && \
+        CacheBase="${{CacheBase:-${{TMPDIR:-/tmp}}}}" && \
+        export PYTENSOR_FLAGS="compiledir=$CacheBase/pytensor_cache_${{SLURM_JOBID:-$$}}" && \
         python scripts/BayesianDoseResponse_ByBatch.py \
             --input {input.data} \
             --output_pkl {output.pkl} \

@@ -3,7 +3,7 @@ import argparse
 import logging
 import pickle
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 
 import arviz as az
 import numpy as np
@@ -151,6 +151,7 @@ def parse_args(args=None):
     parser.add_argument('--output_tsv', required=True, help="Output summary tsv file")
     parser.add_argument('--featureIDsToProcess', nargs='+', default=None, help="Optional: Only process these featureIDs (space-separated list or use multiple times).")
     parser.add_argument('--samples', type=int, default=1000, help="Number of samples to draw from the posterior")
+    parser.add_argument('--MaxFitErrors', type=int, default=0, help="Exit non-zero if more than this many features raise an exception during fitting. Such errors are usually environmental (most often the PyTensor compile cache being deleted mid-run) rather than properties of the data, and would otherwise be recorded silently in the per-feature 'status' column while the job still exits 0. Set to -1 to tolerate any number.")
     parser.add_argument('--AbsSpearmanPreFilter', type=float, default=0.4, help="Minimum |Spearman correlation| between dose and y to attempt fitting")
     parser.add_argument(
         '--PosteriorFilter', nargs=4, action='append',
@@ -416,6 +417,19 @@ def main(args=None):
         pickle.dump(batch_idatas, f)
 
     pd.DataFrame(summary_records).to_csv(args.output_tsv, sep="\t", index=False)
+
+    errored = [r for r in summary_records
+               if str(r.get("status", "")).startswith("Model fit error")]
+    if errored and args.MaxFitErrors >= 0 and len(errored) > args.MaxFitErrors:
+        signatures = Counter(str(r["status"])[:200] for r in errored)
+        logger.error(
+            f"{len(errored)}/{len(summary_records)} features failed to fit with an "
+            f"exception, above the --MaxFitErrors threshold of {args.MaxFitErrors}. "
+            "Distinct signatures:"
+        )
+        for sig, n in signatures.most_common():
+            logger.error(f"  [{n}x] {sig}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

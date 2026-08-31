@@ -15,9 +15,10 @@ samples: "config/samples.tsv"
 # Number of parallel batches for Bayesian model fitting (more = faster on cluster)
 n_batches: 200
 
-# HPC scratch directory for PyTensor compilation cache.
-# Use /tmp/ for local execution. On SLURM clusters use a fast scratch path.
-pytensor_scratch: "/tmp/"
+# Base dir for the PyTensor compilation cache. Leave blank on SLURM to use $TMPDIR
+# (the per-job dir). A shared /tmp is unsafe: the node epilog sweeps the user's /tmp
+# files when any sibling job ends, deleting a live cache mid-run.
+pytensor_scratch: ""
 
 # ---------------------------------------------------------------------------
 # Modeling approaches
