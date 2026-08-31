@@ -159,16 +159,18 @@ def prepare_covariates(
         vals = frame[c].to_numpy(dtype=float)
         distinct = np.unique(vals)
 
-        # An all-ones column is a user trying to supply an intercept. `lower` is already a
-        # first-class model parameter, so this would be exactly collinear with it.
+        # A column with no variation carries no information about beta whatever its value,
+        # so it is dropped rather than fatal: a series in which every sample shares the
+        # condition (all ones) is as uninformative as one where none do (all zeros), and
+        # the baseline absorbs it either way. All-ones is also what a stray intercept
+        # column looks like, so the reason says so.
         if distinct.size == 1:
             if np.isclose(distinct[0], 1.0):
-                raise CovariateDesignError(
-                    f"Covariate column {c!r} is all ones. Do not supply an intercept/offset "
-                    "column: the baseline (`lower`) is already a free parameter of the model, "
-                    "and an all-ones column would be exactly collinear with it."
-                )
-            dropped[c] = f"constant({distinct[0]:g}) in this series"
+                dropped[c] = ("constant(1) in this series -- every sample shares this "
+                              "condition, or an intercept column was supplied; the baseline "
+                              "already covers it")
+            else:
+                dropped[c] = f"constant({distinct[0]:g}) in this series"
             continue
 
         # The identification rule, made operational. beta is identified by the control

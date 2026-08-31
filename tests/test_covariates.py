@@ -39,10 +39,14 @@ def test_no_covariates_returns_none(batch):
     assert design_for_feature(None, batch) == (None, None)
 
 
-def test_all_ones_column_rejected(batch, covariates, write_tsv):
+def test_all_ones_column_dropped_not_fatal(batch, covariates, write_tsv):
+    # A series in which every sample shares the condition (e.g. GSE304951_U1CKD, where all
+    # samples are U1C-knockdown) is as uninformative as one where none do. A stray intercept
+    # column looks identical and is equally harmless to drop.
     covariates["intercept"] = 1
-    with pytest.raises(CovariateDesignError, match="(?i)all ones"):
-        prepare_covariates(write_tsv(covariates), None, batch)
+    spec = prepare_covariates(write_tsv(covariates), None, batch)
+    assert "intercept" in spec.dropped
+    assert spec.columns == ["IFNa", "IFNg"]
 
 
 def test_constant_zero_column_dropped_not_fatal(batch, covariates, write_tsv):
