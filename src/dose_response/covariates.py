@@ -118,6 +118,15 @@ def prepare_covariates(
     """
     raw = load_covariate_table(path, cols)
 
+    # A series with no declarations yields a header-only matrix upstream. That is a positive
+    # statement -- this series is fit without covariates -- not a missing-data problem, so it
+    # short-circuits before the completeness check below.
+    if raw.shape[1] == 0:
+        msg = "no covariates declared for this series; fitting without covariates"
+        logger.info("Covariates: %s", msg)
+        return CovariateSpec(frame=raw, columns=[], center={}, scale={},
+                             dropped={}, warnings=[msg])
+
     samples = pd.unique(batch_df["sample"])
     missing = [s for s in samples if s not in raw.index]
     if missing:
@@ -159,19 +168,17 @@ def prepare_covariates(
         vals = frame[c].to_numpy(dtype=float)
         distinct = np.unique(vals)
 
-        # A column with no variation carries no information about beta whatever its value,
-        # so it is dropped rather than fatal: a series in which every sample shares the
-        # condition (all ones) is as uninformative as one where none do (all zeros), and
-        # the baseline absorbs it either way. All-ones is also what a stray intercept
-        # column looks like, so the reason says so.
+        # The caller hands us one series' matrix, built upstream from the declarations in the
+        # long-format covariate file, so every column here is deliberate. A column with no
+        # variation leaves beta unidentified whatever its value, and silently dropping it
+        # is indistinguishable from a covariate that was never wanted.
         if distinct.size == 1:
-            if np.isclose(distinct[0], 1.0):
-                dropped[c] = ("constant(1) in this series -- every sample shares this "
-                              "condition, or an intercept column was supplied; the baseline "
-                              "already covers it")
-            else:
-                dropped[c] = f"constant({distinct[0]:g}) in this series"
-            continue
+            raise CovariateDesignError(
+                f"Covariate {c!r} is constant ({distinct[0]:g}) across this series' samples, "
+                "so its coefficient is not identified. Remove that (Series, covariate) pair "
+                "from the covariate file, or check the series definition -- a factor that "
+                "varies only BETWEEN series cannot be a within-series covariate."
+            )
 
         # The identification rule, made operational. beta is identified by the control
         # contrast; if the covariate does not vary among the dose-0 samples, that contrast

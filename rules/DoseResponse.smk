@@ -75,13 +75,39 @@ rule SeparateTidyDataIntoBatches:
         """
 
 
+rule CreateSeriesCovariateMatrix:
+    """Pivot the long-format covariate declarations into one series' sample x covariate matrix.
+
+    The long file (Series, sample, covariate, value) is the thing a human edits: a row's
+    presence declares that the covariate is to be estimated in that series. The fitter works
+    one series at a time and takes the matrix, so the reshape belongs here. A series with no
+    rows yields a header-only file, which the fitter treats as covariate-free.
+    """
+    input:
+        covariates = lambda wc: config["approaches"][wc.Approach]["covariates"]
+    output:
+        "DoseResponseModelling/{Approach}/CovariateMatrices/{series}.tsv"
+    log:
+        "logs/CreateSeriesCovariateMatrix.{Approach}.{series}.log"
+    run:
+        import pandas as pd
+        long = pd.read_csv(input.covariates, sep="\t")
+        sub = long[long["Series"].astype(str) == wildcards.series]
+        if sub.empty:
+            pd.DataFrame({"sample": []}).to_csv(output[0], sep="\t", index=False)
+        else:
+            wide = sub.pivot(index="sample", columns="covariate", values="value")
+            wide.columns.name = None
+            wide.reset_index().to_csv(output[0], sep="\t", index=False)
+
+
 rule FitBayesianDoseResponse_ByBatch:
     """Fit Bayesian dose-response model to one batch of features."""
     input:
         data = "DoseResponseModelling/{Approach}/DataBatched/{series}/{n}.tsv.gz",
         # Declared as a real input (not buried in the model_params string) so that editing the
         # covariate table re-triggers the fits. Empty list when the approach declares none.
-        covariates = lambda wc: [config["approaches"][wc.Approach]["covariates"]]
+        covariates = lambda wc: [f"DoseResponseModelling/{wc.Approach}/CovariateMatrices/{wc.series}.tsv"]
                                 if config["approaches"][wc.Approach].get("covariates") else []
     output:
         pkl = "DoseResponseModelling/{Approach}/ResultsBatched/{series}/{n}.pkl",
@@ -92,7 +118,8 @@ rule FitBayesianDoseResponse_ByBatch:
         "../envs/pymc.yaml"
     params:
         extra           = lambda wc: config["approaches"][wc.Approach]["model_params"],
-        covariates      = lambda wc: f"--covariates {config['approaches'][wc.Approach]['covariates']}"
+        covariates      = lambda wc: ("--covariates DoseResponseModelling/"
+                                      f"{wc.Approach}/CovariateMatrices/{wc.series}.tsv")
                                      if config["approaches"][wc.Approach].get("covariates") else "",
         pytensor_scratch = config.get("pytensor_scratch", "")
     resources:

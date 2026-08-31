@@ -39,34 +39,31 @@ def test_no_covariates_returns_none(batch):
     assert design_for_feature(None, batch) == (None, None)
 
 
-def test_all_ones_column_dropped_not_fatal(batch, covariates, write_tsv):
-    # A series in which every sample shares the condition (e.g. GSE304951_U1CKD, where all
-    # samples are U1C-knockdown) is as uninformative as one where none do. A stray intercept
-    # column looks identical and is equally harmless to drop.
-    covariates["intercept"] = 1
-    spec = prepare_covariates(write_tsv(covariates), None, batch)
-    assert "intercept" in spec.dropped
-    assert spec.columns == ["IFNa", "IFNg"]
+@pytest.mark.parametrize("constant", [0, 1])
+def test_constant_column_is_fatal(batch, covariates, write_tsv, constant):
+    # The matrix handed to the fitter holds one series' DECLARED covariates, so a column with
+    # no variation is a design error to report, not something to drop quietly. Value is
+    # irrelevant: all-ones (every sample shares the condition, as in GSE304951 split by arm)
+    # is as unidentified as all-zeros.
+    covariates["U1CKD"] = constant
+    with pytest.raises(CovariateDesignError, match="(?i)constant"):
+        prepare_covariates(write_tsv(covariates), None, batch)
 
 
-def test_constant_zero_column_dropped_not_fatal(batch, covariates, write_tsv):
-    covariates["U1CKD"] = 0        # exists globally but not in this series
-    spec = prepare_covariates(write_tsv(covariates), None, batch)
-    assert "U1CKD" in spec.dropped
-    assert spec.columns == ["IFNa", "IFNg"]
+def test_no_declared_covariates_is_covariate_free(batch, write_tsv):
+    # Header-only matrix: CreateSeriesCovariateMatrix emits this for a series with no rows.
+    import pandas as pd
+    spec = prepare_covariates(write_tsv(pd.DataFrame({"sample": []})), None, batch)
+    assert spec.columns == []
+    assert spec.dropped == {}
 
 
-def test_all_columns_dropped_falls_back_not_fatal(batch, write_tsv):
-    """A global covariate file must be inert -- not fatal -- for series it does not apply to."""
-    batch["sample"] = batch["sample"].str.replace("IFNa", "noStim").str.replace("IFNg", "noStim")
-    batch["treatment"] = (batch["treatment"].str.replace("IFNa", "noStim")
-                          .str.replace("IFNg", "noStim"))
-    batch["sample"] = batch["sample"] + "_" + batch.index.astype(str)   # keep ids unique
-    cov = pd.DataFrame({"sample": batch["sample"], "IFNa": 0, "IFNg": 0})
-    spec = prepare_covariates(write_tsv(cov), None, batch)
+
+
+def test_covariate_free_series_builds_no_design(batch, write_tsv):
+    """A series with no declarations is inert: no design, so the model graph is unchanged."""
+    spec = prepare_covariates(write_tsv(pd.DataFrame({"sample": []})), None, batch)
     assert spec.n_covariates == 0
-    assert set(spec.dropped) == {"IFNa", "IFNg"}
-    # zero covariates must produce no design at all, so the model graph is unchanged
     assert design_for_feature(spec, batch) == (None, None)
 
 
@@ -130,11 +127,9 @@ def test_dose_collinearity_warns_not_fatal(batch, covariates, write_tsv):
 
 
 def test_describe_roundtrip(batch, covariates, write_tsv):
-    covariates["U1CKD"] = 0
     spec = prepare_covariates(write_tsv(covariates), None, batch)
     d = spec.describe()
-    assert "IFNa" in d
-    assert "dropped:U1CKD" in d
+    assert "IFNa" in d and "IFNg" in d
 
 
 def test_parse_covariate_priors():
