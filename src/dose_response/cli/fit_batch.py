@@ -19,6 +19,7 @@ from ..covariates import (
     prepare_covariates,
 )
 from ..filters import check_posterior_filters, check_prefilter_by_number, observed_abs_effect
+from ..matrix_input import assemble_long, chunk_bounds, count_features
 from ..fitting import (
     COVARIATE_INDEXED_SUMMARY_VARS,
     COVARIATE_SUPPORTED_MODELS,
@@ -146,9 +147,14 @@ def parse_args(args=None):
         help="Model name, or its integer alias: "
              + ", ".join(f"{n} ({k})" for k, n in sorted(MODEL_NAMES.items(),
                                                          key=lambda kv: kv[1])))
-    parser.add_argument('--input', required=True, help="Batch input file with data. Required columns: featureID, dose, treatment, columns for outcome variables (y for the expression models; y and n for the splicing models). If dose is 0, the sample is considered untreated.")
+    parser.add_argument('--inputlong', '--input', dest='inputlong', help="Batch input file with data. Required columns: featureID, dose, treatment, columns for outcome variables (y for the expression models; y and n for the splicing models). If dose is 0, the sample is considered untreated.")
     parser.add_argument('--output_pkl', required=True, help="Output pickle file")
     parser.add_argument('--output_tsv', required=True, help="Output summary tsv file")
+    parser.add_argument('--matrix', nargs=2, action='append', metavar=('OUTCOME', 'PATH'), default=None, help="Feature-by-sample matrix supplying one outcome, e.g. --matrix y JuncCounts.bed.gz --matrix n Denom.bed.gz. Repeatable; 'y' is required and the splicing models also need 'n'. Two layouts are accepted and detected automatically from --design: a BED6+ file (six leading columns, as produced upstream) or a bare matrix of a featureID column plus one column per sample. Genome coordinates are never used, so they are not required. Mutually exclusive with --inputlong.")
+    parser.add_argument('--design', default=None, help="Sample-level TSV with columns sample, treatment, dose -- one row per sample in this series. Required with --matrix. This is what selects the matrix columns, so restricting a series to its own samples needs nothing else.")
+    parser.add_argument('--sorted', dest='sorted_input', action='store_true', help="The matrices are sorted by featureID and have a .fidx sidecar; seek to the chunk instead of reading the whole matrix. Off by default, in which case the matrix is read into memory and sliced, which is correct whatever its order. Opt-in because an unsorted or stale-indexed matrix would otherwise silently yield the wrong rows.")
+    parser.add_argument('--feature_col', default=None, help="Name of the feature column in the matrices. Inferred as featureID, else name, else junc, else the first non-sample column.")
+    parser.add_argument('--chunks', nargs=2, type=int, metavar=('N', 'M'), default=None, help="Process only chunk N of M, splitting features into M contiguous chunks with the remainder spread over the leading chunks. N=0 writes just the header, so concatenating the outputs of chunks 0..M reproduces an unchunked run exactly.")
     parser.add_argument('--featureIDsToProcess', nargs='+', default=None, help="Optional: Only process these featureIDs (space-separated list or use multiple times).")
     parser.add_argument('--samples', type=int, default=1000, help="Number of samples to draw from the posterior")
     parser.add_argument('--MaxFitErrors', type=int, default=0, help="Exit non-zero if more than this many features raise an exception during fitting. Such errors are usually environmental (most often the PyTensor compile cache being deleted mid-run) rather than properties of the data, and would otherwise be recorded silently in the per-feature 'status' column while the job still exits 0. Set to -1 to tolerate any number.")
@@ -256,6 +262,82 @@ def setup_logging(verbose):
     for noisy_pkg in ["pymc", "arviz", "pytensor", "numba"]:
         logging.getLogger(noisy_pkg).setLevel(logging.WARNING)
 
+def validate_input_args(args):
+    if bool(args.matrix) == bool(args.inputlong):
+        raise ValueError("Give exactly one of --inputlong or --matrix.")
+    if args.matrix:
+        outcomes = [o for o, _ in args.matrix]
+        if "y" not in outcomes:
+            raise ValueError(f"--matrix must supply 'y'; got {outcomes}.")
+        if len(set(outcomes)) != len(outcomes):
+            raise ValueError(f"--matrix outcomes must be unique; got {outcomes}.")
+        needs_n = MODEL_CONFIG[args.model]["spearman_func"] is not None and args.model in (2, 4, 5, 6)
+        if needs_n and "n" not in outcomes:
+            raise ValueError(
+                f"model {MODEL_CONFIG[args.model]['name']!r} is a splicing model and needs a "
+                f"denominator, so --matrix n <path> is required; got {outcomes}."
+            )
+        if not args.design:
+            raise ValueError("--design is required with --matrix.")
+    elif args.sorted_input or args.feature_col:
+        raise ValueError("--sorted and --feature_col only apply to --matrix input.")
+
+
+def write_header_only(args, logger):
+    """Emit chunk 0: the summary header, an empty pickle, and nothing else."""
+    import pickle
+
+    treatments = []
+    if args.design:
+        design = pd.read_csv(args.design, sep="\t")
+        treated = design[pd.to_numeric(design["dose"], errors="coerce").fillna(0) > 0]
+        treatments = sorted(treated["treatment"].astype(str).unique())
+
+    cfg = MODEL_CONFIG[args.model]
+    cols = ["feature", "model", "covariates_used"]
+    cols += [f"spearman_{t}" for t in treatments] + ["status"]
+    for var in cfg["summary_vars_scalar"]:
+        cols += [f"{var}_{suffix}" for suffix in ("mean", "95hdi_lower", "95hdi_upper", "rhat")]
+    for var in cfg["summary_vars_treatment"]:
+        for t in treatments:
+            cols += [f"{var}_{t}_{suffix}" for suffix in ("mean", "95hdi_lower", "95hdi_upper", "rhat")]
+    cols += [f"posterior_predictive_R2_{t}" for t in treatments]
+
+    pd.DataFrame(columns=cols).to_csv(args.output_tsv, sep="\t", index=False)
+    with open(args.output_pkl, "wb") as fh:
+        pickle.dump({}, fh)
+    logger.info(f"chunk 0: wrote header with {len(cols)} columns and an empty pickle")
+
+
+def load_input(args, logger):
+    """Return the long table, from either --inputlong or --matrix + --design."""
+    source_start, source_count = 0, None
+    if args.matrix:
+        design = pd.read_csv(args.design, sep="\t")
+        matrices = {outcome: path for outcome, path in args.matrix}
+        total = count_features(next(iter(matrices.values())))
+        if args.chunks:
+            n, m = args.chunks
+            source_start, source_count = chunk_bounds(total, n, m)
+        else:
+            source_count = total
+        logger.info(f"Reading rows [{source_start}, {source_start + source_count}) of {total} from "
+                    f"{len(matrices)} matri{'x' if len(matrices) == 1 else 'ces'}"
+                    f"{' via the sorted index' if args.sorted_input else ''}")
+        return assemble_long(matrices, design, source_start, source_count,
+                             sorted_access=args.sorted_input, feature_col=args.feature_col)
+
+    logger.info(f"Reading input: {args.inputlong}")
+    df = pd.read_csv(args.inputlong, sep="\t")
+    if args.chunks:
+        n, m = args.chunks
+        features = df["featureID"].drop_duplicates().tolist()
+        start, count = chunk_bounds(len(features), n, m)
+        keep = set(features[start:start + count])
+        df = df[df["featureID"].isin(keep)]
+    return df
+
+
 def main(args=None):
     args = parse_args(args)
     args.model = resolve_model(args.model)
@@ -265,9 +347,15 @@ def main(args=None):
     # Validate treatment-specific priors
     validate_treatment_specific_priors(args, args.model)
     validate_covariate_args(args, args.model)
+    validate_input_args(args)
 
-    logger.info(f"Reading input: {args.input}")
-    df = pd.read_csv(args.input, sep="\t")
+    # Chunk 0 carries the header and no rows, so that concatenating chunks 0..M reproduces an
+    # unchunked run. It needs no data at all, hence the early exit.
+    if args.chunks and args.chunks[0] == 0:
+        write_header_only(args, logger)
+        return
+
+    df = load_input(args, logger)
     if args.featureIDsToProcess is not None:
         logger.info(f"Filtering to features: {args.featureIDsToProcess}")
         df = df[df["featureID"].isin(args.featureIDsToProcess)]
@@ -285,7 +373,7 @@ def main(args=None):
     if getattr(args, "covariates", None):
         if "sample" not in df.columns:
             raise CovariateDesignError(
-                f"--covariates was given but the tidy data {args.input!r} has no 'sample' "
+                "--covariates was given but the input has no 'sample' "
                 "column to join on. All built-in transforms emit one."
             )
         args.cov_spec = prepare_covariates(
