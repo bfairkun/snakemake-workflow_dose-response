@@ -35,7 +35,9 @@ rule CreateTidyData:
     conda:
         "../envs/r_deps.yaml"
     resources:
-        mem_mb = GetMemForSuccessiveAttempts(24000, 48000)
+        # 24000 reliably OOMs on the splicing tables (~23G used) and each failed attempt
+        # costs ~27 min before the 48000 retry even starts, so start at 48000.
+        mem_mb = GetMemForSuccessiveAttempts(48000, 64000)
     shell:
         """
         Rscript scripts/transforms/{params.transform}.R \
