@@ -103,10 +103,46 @@ rule CreateSeriesCovariateMatrix:
             wide.reset_index().to_csv(output[0], sep="\t", index=False)
 
 
+rule CreateSeriesDesignFile:
+    """Sample-level design for one Series x Approach: sample, treatment, dose.
+
+    This is all the fitter needs besides the matrices -- dose and treatment are properties of a
+    sample, so there is no reason to repeat them once per feature. It is per Approach, not just
+    per Series, because `exclude_expression` drops degraded libraries from the expression
+    approaches but not the splicing ones, so the two see different sample sets.
+    """
+    input:
+        samples = config["samples"]
+    output:
+        "DoseResponseModelling/{Approach}/Designs/{series}.tsv"
+    params:
+        exclude_flag = lambda wc: config["approaches"][wc.Approach].get("exclude_flag", "")
+    log:
+        "logs/CreateSeriesDesignFile.{Approach}.{series}.log"
+    run:
+        import pandas as pd
+        samples = pd.read_csv(input.samples, sep="\t")
+        sub = samples[samples["Series"].astype(str) == wildcards.series]
+        flag = params.exclude_flag
+        if flag and flag in sub.columns:
+            sub = sub[sub[flag].astype(str).str.upper() != "TRUE"]
+        out = pd.DataFrame({
+            "sample": sub["sample"],
+            "treatment": sub["Treatment"],
+            "dose": sub["dose.nM"],
+        }).drop_duplicates()
+        out.to_csv(output[0], sep="\t", index=False)
+
+
 rule FitBayesianDoseResponse_ByBatch:
     """Fit Bayesian dose-response model to one batch of features."""
     input:
-        data = "DoseResponseModelling/{Approach}/DataBatched/{series}/{n}.tsv.gz",
+        # A matrix approach reads the matrices directly and slices its own chunk, so it needs
+        # neither the tidy data nor the pre-split batch files.
+        data = lambda wc: (list(config["approaches"][wc.Approach]["matrices"].values())
+                            + [f"DoseResponseModelling/{wc.Approach}/Designs/{wc.series}.tsv"]
+                           if config["approaches"][wc.Approach].get("matrices")
+                           else [f"DoseResponseModelling/{wc.Approach}/DataBatched/{wc.series}/{wc.n}.tsv.gz"]),
         # Declared as a real input (not buried in the model_params string) so that editing the
         # covariate table re-triggers the fits. Empty list when the approach declares none.
         covariates = lambda wc: [f"DoseResponseModelling/{wc.Approach}/CovariateMatrices/{wc.series}.tsv"]
@@ -123,7 +159,8 @@ rule FitBayesianDoseResponse_ByBatch:
         covariates      = lambda wc: ("--covariates DoseResponseModelling/"
                                       f"{wc.Approach}/CovariateMatrices/{wc.series}.tsv")
                                      if config["approaches"][wc.Approach].get("covariates") else "",
-        pytensor_scratch = config.get("pytensor_scratch", "")
+        pytensor_scratch = config.get("pytensor_scratch", ""),
+        input_args = lambda wc: InputArgsForApproach(wc, config, N_BATCHES)
     resources:
         mem_mb = GetMemForSuccessiveAttempts(16000, 48000, max_mb=64000)
     shell:
@@ -134,7 +171,7 @@ rule FitBayesianDoseResponse_ByBatch:
         CacheBase="${{CacheBase:-${{TMPDIR:-/tmp}}}}" && \
         export PYTENSOR_FLAGS="compiledir=$CacheBase/pytensor_cache_${{SLURM_JOBID:-$$}}" && \
         python scripts/BayesianDoseResponse_ByBatch.py \
-            --input {input.data} \
+            {params.input_args} \
             --output_pkl {output.pkl} \
             --output_tsv {output.tsv} \
             {params.covariates} \
@@ -199,12 +236,10 @@ rule SpecificityTest:
 rule WriteSQLite:
     """Write all batch InferenceData pkl files into a single queryable SQLite database."""
     input:
-        pkls = expand(
-            "DoseResponseModelling/{Approach}/ResultsBatched/{series}/{n}.pkl",
-            Approach=list(APPROACHES.keys()),
-            series=SERIES,
-            n=range(N_BATCHES)
-        )
+        pkls = [f"DoseResponseModelling/{approach}/ResultsBatched/{series}/{n}.pkl"
+                for approach in APPROACHES
+                for series in APPROACH_SERIES[approach]
+                for n in range(N_BATCHES)]
     output:
         db = "DoseResponseModelling/InferenceDataResults.sqlite"
     log:
@@ -226,20 +261,15 @@ rule WriteSQLite:
 rule GatherAll:
     """Aggregate target: all gathered results, specificity tests, and SQLite database."""
     input:
-        expand(
-            "DoseResponseModelling/{Approach}/Results/{series}.pkl",
-            Approach=list(APPROACHES.keys()),
-            series=SERIES
-        ),
-        expand(
-            "DoseResponseModelling/{Approach}/Results/{series}.tsv.gz",
-            Approach=list(APPROACHES.keys()),
-            series=SERIES
-        ),
+        [f"DoseResponseModelling/{approach}/Results/{series}.pkl"
+         for approach in APPROACHES for series in APPROACH_SERIES[approach]],
+        [f"DoseResponseModelling/{approach}/Results/{series}.tsv.gz"
+         for approach in APPROACHES for series in APPROACH_SERIES[approach]],
         [
             f"DoseResponseModelling/{approach}/SpecificityTest/{series}/{param}_SpecificityTestResults.tsv.gz"
             for approach in APPROACHES
             for series in SERIES_WITH_MULTIPLE_TREATMENTS
+            if series in APPROACH_SERIES[approach]
             for param in APPROACH_SPECIFICITY_PARAMS[approach]
         ],
         "DoseResponseModelling/InferenceDataResults.sqlite"

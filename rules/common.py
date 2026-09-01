@@ -18,6 +18,23 @@ _samples = pd.read_csv(config["samples"], sep="\t")
 SERIES   = _samples["Series"].dropna().unique().tolist() if "Series" in _samples.columns else []
 validate(_samples, "../schemas/samples.schema.yaml")
 
+# An approach may cover only some Series -- the SpliSER quantifications, for instance, were
+# run on a subset of the samples, so those approaches have nothing to fit for the ported
+# series. Listing them per approach keeps the DAG honest instead of failing at job time.
+def SeriesForApproach(approach):
+    declared = config["approaches"][approach].get("series")
+    if not declared:
+        return SERIES
+    unknown = [s for s in declared if s not in SERIES]
+    if unknown:
+        raise ValueError(f"approach {approach!r} lists unknown series {unknown}; "
+                         f"known series are {SERIES}")
+    return list(declared)
+
+
+APPROACH_SERIES = {approach: SeriesForApproach(approach) for approach in APPROACHES}
+
+
 # Series with >1 unique non-control Treatment (i.e. Treatment != control_treatment).
 # SpecificityTest is only meaningful for these — single-drug series produce a
 # drug-vs-DMSO comparison that is already captured by the dose-response model itself.
@@ -51,3 +68,19 @@ def GetMemForSuccessiveAttempts(*args, max_mb=48000):
         except IndexError:
             return max_mb
     return ReturnMemMb
+
+
+def InputArgsForApproach(wildcards, config, n_batches):
+    """The input-related CLI arguments for one fit job, for either input path.
+
+    Snakemake's {n} runs 0..n_batches-1 while --chunks counts 1..M (0 being the header-only
+    chunk, which the pipeline does not need because the gather step reads the TSVs rather than
+    concatenating them), hence the +1.
+    """
+    approach = config["approaches"][wildcards.Approach]
+    matrices = approach.get("matrices")
+    if not matrices:
+        return f"--inputlong DoseResponseModelling/{wildcards.Approach}/DataBatched/{wildcards.series}/{wildcards.n}.tsv.gz"
+    args = " ".join(f"--matrix {outcome} {path}" for outcome, path in matrices.items())
+    design = f"DoseResponseModelling/{wildcards.Approach}/Designs/{wildcards.series}.tsv"
+    return f"{args} --design {design} --chunks {int(wildcards.n) + 1} {n_batches}"
