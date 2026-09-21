@@ -159,7 +159,7 @@ def parse_args(args=None):
     parser.add_argument('--samples', type=int, default=1000, help="Number of samples to draw from the posterior")
     parser.add_argument('--MaxFitErrors', type=int, default=0, help="Exit non-zero if more than this many features raise an exception during fitting. Such errors are usually environmental (most often the PyTensor compile cache being deleted mid-run) rather than properties of the data, and would otherwise be recorded silently in the per-feature 'status' column while the job still exits 0. Set to -1 to tolerate any number.")
     parser.add_argument('--AbsSpearmanPreFilter', type=float, default=0.4, help="Minimum |Spearman correlation| between dose and y to attempt fitting")
-    parser.add_argument('--MinObservedAbsEffect', type=float, default=None, help="Skip fitting a feature whose OBSERVED outcome barely moves: the largest |mean(outcome at an arm's top dose) - mean(outcome in a dose-0 group)|, maximised over treated arms and control groups, must reach this value. Units follow the model's outcome (PSI for the splicing models, log2 for the expression models). This is a necessary condition for a demonstrated-change posterior filter such as --PosteriorFilter dPSI_at_maxdose 0.95 0.1 1, since the fitted effect at the top dose is anchored on these same observations; it exists because such features are both discarded and disproportionately slow to sample (an unidentified posterior forces a tiny step size). A feature whose baseline or top dose is unmeasurable is always kept. Off by default.")
+    parser.add_argument('--MinObservedAbsEffect', type=float, default=None, help="Skip fitting a feature whose OBSERVED outcome barely moves: the largest |mean(outcome at an arm's top dose) - mean(outcome in a dose-0 group)|, maximised over treated arms and control groups, must reach this value. Units follow the model's outcome (PSI for the splicing models, log2 for the expression models). This is a necessary condition for a demonstrated-change posterior filter such as --PosteriorFilter dPSI_at_maxdose 0.95 0.1 1, since the fitted effect at the top dose is anchored on these same observations; it exists because such features are both discarded and disproportionately slow to sample (an unidentified posterior forces a tiny step size). A feature whose baseline or top dose is unmeasurable is always kept. Defaults to the model's own default_min_observed_abs_effect (0.10 for the splicing models, off for the expression models, whose units are log2 rather than PSI); pass 0 to disable.")
     parser.add_argument(
         '--PosteriorFilter', nargs=4, action='append',
         metavar=('param', 'fraction', 'low', 'high'),
@@ -294,6 +294,13 @@ def write_header_only(args, logger):
         treatments = sorted(treated["treatment"].astype(str).unique())
 
     cfg = MODEL_CONFIG[args.model]
+    # Fall back to the model's own default: this threshold is in the model's outcome units,
+    # so a single global default would apply a PSI-calibrated number to log2 outcomes.
+    # An explicit 0 disables it, which `is not None` alone would not allow.
+    min_observed_abs_effect = (args.MinObservedAbsEffect if args.MinObservedAbsEffect is not None
+                               else cfg.get("default_min_observed_abs_effect"))
+    if min_observed_abs_effect == 0:
+        min_observed_abs_effect = None
     cols = ["feature", "model", "covariates_used"]
     cols += [f"spearman_{t}" for t in treatments] + ["status"]
     for var in cfg["summary_vars_scalar"]:
@@ -442,10 +449,10 @@ def main(args=None):
             logger.info(f"Feature {feature} filtered out: low correlation")
             continue
 
-        if args.MinObservedAbsEffect is not None:
+        if min_observed_abs_effect is not None:
             effect = observed_abs_effect(feature_data, treated,
                                          MODEL_CONFIG[args.model]["spearman_func"])
-            if np.isfinite(effect) and effect < args.MinObservedAbsEffect:
+            if np.isfinite(effect) and effect < min_observed_abs_effect:
                 row["status"] = (f"Did not fit; observed |effect| at top dose {effect:.4f} "
                                  f"< {args.MinObservedAbsEffect}")
                 summary_records.append(row)

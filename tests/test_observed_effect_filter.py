@@ -49,3 +49,23 @@ def test_unmeasurable_returns_nan_so_caller_keeps_feature():
 def test_no_controls_returns_nan():
     d = _batch([("drug", 10, 10, 100), ("drug", 100, 90, 100)])
     assert np.isnan(observed_abs_effect(d, d[d.dose > 0], PSI))
+
+
+# --- per-model default for --MinObservedAbsEffect -----------------------------------------
+# The threshold is in the model's OUTCOME units, so the default lives per model rather than
+# as one CLI-wide scalar: 0.10 (PSI) for the splicing models, off for the expression models
+# whose outcome is log2.
+
+def test_splicing_models_default_to_calibrated_threshold():
+    from dose_response.fitting import MODEL_CONFIG
+    for m, cfg in MODEL_CONFIG.items():
+        if isinstance(m, int) and cfg["name"].startswith("splicing"):
+            assert cfg["default_min_observed_abs_effect"] == 0.10, cfg["name"]
+
+
+def test_expression_models_have_no_default():
+    """0.10 is a PSI number; applying it to a log2 outcome would be a unit error."""
+    from dose_response.fitting import MODEL_CONFIG
+    for m, cfg in MODEL_CONFIG.items():
+        if isinstance(m, int) and cfg["name"].startswith("expression"):
+            assert cfg["default_min_observed_abs_effect"] is None, cfg["name"]
