@@ -39,6 +39,20 @@ def check_posterior_filters(idata, filters):
     filters: list of (param, fraction, low, high)
     For each param, combine all intervals, and require that the fraction of posterior samples
     in the union of all intervals is at least the specified threshold.
+
+    ANY-ARM semantics for treatment-dimensioned parameters. Params such as dPSI_at_maxdose /
+    dY_at_maxdose carry a `treatment` dim, so the test is applied per arm and the feature
+    passes if ANY arm clears the threshold. A feature that responds to one drug and not the
+    others is exactly the interesting case, and it must not be penalised for the arms that do
+    nothing.
+
+    This previously flattened the array over arms, which silently turned the test into
+    "what fraction of ARMS respond": with three arms and one responder the achievable maximum
+    was ~0.33, so no arm-selective effect could ever reach 0.95. It discarded e.g. the PRNP
+    cryptic donor (pooled 0.45) and the ATG5 skipping junction (0.91) in Exp2 despite both
+    being clean, strong, branaplam-selective responses. Single-arm series were unaffected,
+    since pooling over one arm is a no-op.
+
     Returns (True, "Pass") if all filters pass, else (False, reason)
     """
     filter_dict = defaultdict(list)
@@ -46,21 +60,35 @@ def check_posterior_filters(idata, filters):
         filter_dict[param].append((float(fraction), float(low), float(high)))
 
     for param, intervals in filter_dict.items():
-        arr = idata.posterior[param].values.flatten()
-        # Union of all intervals
-        mask = np.zeros_like(arr, dtype=bool)
+        da = idata.posterior[param]
         required_fraction = None
-        for fraction, low, high in intervals:
-            mask |= ((arr >= low) & (arr <= high))
+        for fraction, _, _ in intervals:
             if required_fraction is None:
                 required_fraction = fraction
             elif required_fraction != fraction:
                 raise ValueError(f"Multiple different fractions specified for {param} in posterior filter.")
-        frac_in_range = np.mean(mask)
-        if frac_in_range < required_fraction:
+
+        # Per-arm draw matrices; a scalar param stays a single "arm" so behaviour is unchanged.
+        arm_dims = [d for d in da.dims if d not in ("chain", "draw")]
+        if arm_dims:
+            arm_names = [str(v) for v in da.coords[arm_dims[0]].values]
+            arrays = [da.isel({arm_dims[0]: i}).values.ravel() for i in range(len(arm_names))]
+        else:
+            arm_names, arrays = ["ALL"], [da.values.ravel()]
+
+        fracs = []
+        for arr in arrays:
+            mask = np.zeros_like(arr, dtype=bool)
+            for _, low, high in intervals:
+                mask |= ((arr >= low) & (arr <= high))
+            fracs.append(float(np.mean(mask)))
+
+        if max(fracs) < required_fraction:
             intervals_str = " or ".join([f"[{low}, {high}]" for _, low, high in intervals])
+            best = arm_names[int(np.argmax(fracs))]
             return False, (
-                f"Did not fit; {param}: only {frac_in_range:.2f} in {intervals_str} (required {required_fraction})"
+                f"Did not fit; {param}: best arm {best} only {max(fracs):.2f} in {intervals_str} "
+                f"(required {required_fraction} in at least one arm)"
             )
     return True, "Pass"
 
