@@ -391,6 +391,11 @@ def main(args=None):
             max_covariate_fraction=args.max_covariate_fraction,
         )
 
+    min_observed_abs_effect = (args.MinObservedAbsEffect if args.MinObservedAbsEffect is not None
+                               else MODEL_CONFIG[args.model].get("default_min_observed_abs_effect"))
+    if min_observed_abs_effect == 0:
+        min_observed_abs_effect = None
+
     batch_idatas = {}
     summary_records = []
     filters = args.PosteriorFilter if args.PosteriorFilter else []
@@ -454,7 +459,7 @@ def main(args=None):
                                          MODEL_CONFIG[args.model]["spearman_func"])
             if np.isfinite(effect) and effect < min_observed_abs_effect:
                 row["status"] = (f"Did not fit; observed |effect| at top dose {effect:.4f} "
-                                 f"< {args.MinObservedAbsEffect}")
+                                 f"< {min_observed_abs_effect}")
                 summary_records.append(row)
                 logger.info(f"Feature {feature} filtered out: observed effect {effect:.4f}")
                 continue
